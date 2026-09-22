@@ -1,0 +1,99 @@
+From cc5ee76d9203a0e1da5770001f2844932d82836f Mon Sep 17 00:00:00 2001
+From: kebab bring-up <local@invalid>
+Date: Fri, 18 Sep 2026 14:41:15 +0200
+Subject: [PATCH] kebab: TEMP DIAG (0087) -- dump CSIPHY link_freq / settle_cnt
+ / lane mapping
+
+The front IMX471 now probes, identifies and streams. Read back over I2C
+while running:
+
+  0x0016 = 0x0471   chip id
+  0x0100 = 0x01     MODE_SELECT = streaming
+  0x0114 = 0x03     4-lane CSI-2
+  0x0112 = 0x0a0a   RAW10
+
+CSIPHY4 core and timer clocks are enabled (400MHz / 300MHz, hardware
+enable Y, consumer 24-0010), vdda-phy and vdda-pll are real regulators
+since 0086 with rising use counts during streamon, and titan_top_gdsc is
+on. The media graph is fully linked and VIDIOC_STREAMON is accepted, but
+DQBUF blocks forever and CSIPHY4 never takes an interrupt.
+
+Instrument csiphy_lanes_enable() to print what it was actually given.
+The specific suspicion is link_freq: csiphy_settle_cnt_calc() returns 0
+for any link_freq <= 0, which would leave the PHY unable to lock on
+T_hs_settle while every ioctl still reports success -- matching the
+symptom exactly. The sensor advertises V4L2_CID_LINK_FREQ = 200000000,
+so the value should be 200000000 and settle_cnt should work out to 24
+against the 300MHz timer clock; anything else is the bug.
+
+Also dump the resolved lane mask and per-lane positions, to rule in or
+out a lane-mapping error, and read the common status block after
+configuration. The vendor sensor module descriptor gives laneAssign =
+0x3210, an identity mapping, which agrees with data-lanes = <1 2 3 4>.
+
+Note kebab is currently the only SM8250 board in mainline that enables
+camss, so there is no known-good reference configuration on this SoC to
+diff against.
+
+Temporary. Revert once frames flow.
+---
+ .../qcom/camss/camss-csiphy-3ph-1-0.c         | 43 +++++++++++++++++++
+ 1 file changed, 43 insertions(+)
+
+diff --git a/drivers/media/platform/qcom/camss/camss-csiphy-3ph-1-0.c b/drivers/media/platform/qcom/camss/camss-csiphy-3ph-1-0.c
+index dac8d2ecf..d0093d318 100644
+--- a/drivers/media/platform/qcom/camss/camss-csiphy-3ph-1-0.c
++++ b/drivers/media/platform/qcom/camss/camss-csiphy-3ph-1-0.c
+@@ -1189,6 +1189,49 @@ static void csiphy_lanes_enable(struct csiphy_device *csiphy,
+ 		writel_relaxed(0, csiphy->base +
+ 			       CSIPHY_3PH_CMN_CSI_COMMON_CTRLn(regs->offset, i));
+ 	}
++
++	/*
++	 * TEMP DIAGNOSTIC (0087, revert once streaming works).
++	 *
++	 * The front IMX471 is confirmed streaming (0x0100=1, 0x0114=3 i.e.
++	 * 4-lane, 0x0112=0x0a0a i.e. RAW10, chip id 0x0471 all read back over
++	 * I2C while running), CSIPHY4 core and timer clocks are enabled at
++	 * 400MHz/300MHz, vdda-phy/vdda-pll are real regulators since 0086 and
++	 * titan_top_gdsc is on -- yet no buffer ever completes and CSIPHY4
++	 * takes zero interrupts.
++	 *
++	 * Dump what this function was actually handed. settle_cnt is derived
++	 * from link_freq, and csiphy_settle_cnt_calc() returns 0 for any
++	 * link_freq <= 0, which would leave the PHY unable to lock while
++	 * every ioctl still succeeds. Also print the resolved lane mask and
++	 * positions so a lane-mapping error is visible, and read back the
++	 * common status block after configuration.
++	 */
++	{
++		struct device *dev = csiphy->camss->dev;
++		u32 st0, st1;
++
++		dev_info(dev,
++			 "CSIPHY DIAG(0087): id=%u link_freq=%lld timer_clk=%u settle_cnt=%u lane_mask=0x%02x num_data=%u\n",
++			 csiphy->id, link_freq, csiphy->timer_clk_rate,
++			 csiphy_settle_cnt_calc(link_freq, csiphy->timer_clk_rate),
++			 lane_mask, c->num_data);
++
++		for (i = 0; i < c->num_data; i++)
++			dev_info(dev, "CSIPHY DIAG(0087):   data lane %d -> pos %u\n",
++				 i, c->data[i].pos);
++		dev_info(dev, "CSIPHY DIAG(0087):   clk lane pos %u\n",
++			 c->clk.pos);
++
++		st0 = readl_relaxed(csiphy->base +
++			CSIPHY_3PH_CMN_CSI_COMMON_STATUSn(regs->offset,
++							  regs->common_status_offset, 0));
++		st1 = readl_relaxed(csiphy->base +
++			CSIPHY_3PH_CMN_CSI_COMMON_STATUSn(regs->offset,
++							  regs->common_status_offset, 1));
++		dev_info(dev, "CSIPHY DIAG(0087):   common_status0=0x%08x status1=0x%08x\n",
++			 st0, st1);
++	}
+ }
+ 
+ static void csiphy_lanes_disable(struct csiphy_device *csiphy,
+-- 
+2.55.0
+

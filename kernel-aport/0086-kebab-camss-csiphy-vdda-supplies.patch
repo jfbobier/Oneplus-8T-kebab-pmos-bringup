@@ -1,0 +1,69 @@
+From fa53b9bfe8b16e2ea22f842c7b8f2ea4b0e648ae Mon Sep 17 00:00:00 2001
+From: kebab bring-up <local@invalid>
+Date: Fri, 18 Sep 2026 14:14:15 +0200
+Subject: [PATCH] kebab: wire CSIPHY analog supplies to camss
+
+The camss node had no supplies, so every boot logged, once per CSIPHY:
+
+  qcom-camss ac6a000.camss: supply vdda-phy not found, using dummy regulator
+  qcom-camss ac6a000.camss: supply vdda-pll not found, using dummy regulator
+
+camss.c requests vdda-phy (init_load 42800uA) and vdda-pll (13900uA) for
+the CSIPHY analog domain. Backed by dummy regulators these calls all
+succeed, so nothing fails loudly: the sensor identifies, the media graph
+links, format propagation works and VIDIOC_STREAMON is accepted. But the
+PHY analog supply is not actually up, so no CSI-2 data is received and
+the capture simply produces no buffers and no error -- which is precisely
+what /dev/video0 does today now that the sensor is finally talking.
+
+vreg_l5a_0p88 and vreg_l9a_1p2 are the usual SM8250 PHY analog / PLL
+pairing and both already exist on this board, where they feed the UFS
+PHY (sm8250-oneplus-kebab.dts lines 633-634).
+
+Front camera status for context: after 0077 (VANA polarity), 0082
+(vendor power sequence), 0083 (CCI1 master 1) and 0085 (slave address
+0x10), the sensor probes cleanly and registers as a subdev:
+
+  entity 329: imx471 24-0010, /dev/v4l-subdev24
+    pad0 SOURCE fmt:SRGGB10_1X10/1928x1088 crop.bounds:(8,8)/4656x3496
+      -> "msm_csiphy4":0 [ENABLED,IMMUTABLE]
+
+with exposure, analogue_gain, blanking, flip and link_frequency controls
+all read back from the part. The full path imx471 -> csiphy4 -> csid0 ->
+vfe0_rdi0 -> /dev/video0 is linked and enabled. Frames are the last gap.
+---
+ .../boot/dts/qcom/sm8250-oneplus-kebab.dts     | 18 ++++++++++++++++++
+ 1 file changed, 18 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
+index b97e81442..be285890a 100644
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
+@@ -1972,6 +1972,24 @@ L7P: ldo7 {
+ 
+ &camss {
+ 	status = "okay";
++
++	/*
++	 * CSIPHY analog supplies. Without these the camss driver logs
++	 *   qcom-camss ac6a000.camss: supply vdda-phy not found,
++	 *                             using dummy regulator
++	 * once per CSIPHY at every boot, and the PHY analog domain is
++	 * never actually powered. camss.c requests vdda-phy at 42800uA
++	 * and vdda-pll at 13900uA. A dummy regulator lets every ioctl
++	 * succeed and the media graph link up, while no CSI-2 data ever
++	 * arrives -- which is exactly the symptom: sensor identified,
++	 * pipeline configured, streamon accepted, zero frames, no error.
++	 *
++	 * vreg_l5a_0p88 / vreg_l9a_1p2 are the standard SM8250 pairing
++	 * for PHY analog + PLL, and both already exist on this board
++	 * (they feed the UFS PHY).
++	 */
++	vdda-phy-supply = <&vreg_l5a_0p88>;
++	vdda-pll-supply = <&vreg_l9a_1p2>;
+ };
+ 
+ &cci0 {
+-- 
+2.55.0
+

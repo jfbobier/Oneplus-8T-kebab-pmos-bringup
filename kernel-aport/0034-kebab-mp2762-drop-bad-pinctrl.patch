@@ -1,0 +1,25 @@
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
+@@ -1605,8 +1605,6 @@
+ 		reg = <0x5c>;
+ 
+ 		otg-gate-gpios = <&pm8150_gpios 3 GPIO_ACTIVE_HIGH>;
+-		pinctrl-names = "default";
+-		pinctrl-0 = <&mps_otg_en_default>;
+ 
+ 		/*
+ 		 * Deliberately not wired as anyone's vbus-supply yet. This
+@@ -1626,13 +1624,3 @@
+ 	};
+ };
+ 
+-&pm8150_gpios {
+-	mps_otg_en_default: mps-otg-en-default-state {
+-		pins = "gpio3";
+-		function = "normal";
+-		power-source = <1>;
+-		bias-disable;
+-		drive-strength = <3>;
+-		output-low;
+-	};
+-};

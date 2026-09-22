@@ -1,0 +1,31 @@
+diff -urN old/drivers/bus/mhi/host/sahara.c new/drivers/bus/mhi/host/sahara.c
+--- a/drivers/bus/mhi/host/sahara.c	2026-09-07 19:42:57.888208579 +0200
++++ b/drivers/bus/mhi/host/sahara.c	2026-09-07 19:42:57.904812263 +0200
+@@ -121,6 +121,27 @@
+ 		return "sdx55m/efs3.bin";
+ 	case 34:
+ 		return sdev->mhi_dev->mhi_cntrl->amss_image;
++	/*
++	 * kebab (OnePlus 8T) image IDs, established empirically by watching the
++	 * SBL walk its multi-image boot chain and confirming each file by magic:
++	 *
++	 *   37 -> multi_image.mbn      OEM-signed manifest ("MULT" at 0x3000)
++	 *   36 -> multi_image_qti.mbn  QTI-signed companion manifest
++	 *   40 -> apdp.mbn             debug policy ("DBGP"), already mapped below
++	 *    8 -> qdsp6sw.mbn          the modem payload itself
++	 *
++	 * apollo's SBL asks for 34 where kebab's asks for 37; both want the
++	 * manifest. Leaving 36/37 unmapped sent them to the qdsp6sw default,
++	 * handing the SBL an 84 MB image where a ~12 KB manifest was expected,
++	 * after which it stopped asking and the health-check timer declared the
++	 * modem dead.
++	 */
++	case 37:
++		return sdev->mhi_dev->mhi_cntrl->amss_image;
++	case 36:
++		return "sdx55m/multi_image_qti.mbn";
++	case 8:
++		return "sdx55m/qdsp6sw.mbn";
+ 	case 25:
+ 		return "sdx55m/tz.mbn";
+ 	case 29:

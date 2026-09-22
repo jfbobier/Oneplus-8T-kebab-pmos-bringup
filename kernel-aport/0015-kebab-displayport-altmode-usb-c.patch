@@ -1,0 +1,172 @@
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
+@@ -11,6 +11,7 @@
+ #include "pm8009.dtsi"
+ #include <dt-bindings/sound/qcom,q6afe.h>
+ #include <dt-bindings/sound/qcom,q6asm.h>
++#include <dt-bindings/usb/pd.h>
+ 
+ /*
+  * Delete following upstream (sm8250.dtsi) reserved
+@@ -781,17 +782,13 @@
+ };
+ 
+ &usb_1 {
+-	/* USB 2.0 only */
+-	qcom,select-utmi-as-pipe-clk;
+ 	status = "okay";
+ };
+ 
+ &usb_1_dwc3 {
+-	dr_mode = "peripheral";
+-	maximum-speed = "high-speed";
+-	/* Remove USB3 phy */
+-	phys = <&usb_1_hsphy>;
+-	phy-names = "usb2-phy";
++	dr_mode = "otg";
++	usb-role-switch;
++	maximum-speed = "super-speed";
+ };
+ 
+ &usb_1_hsphy {
+@@ -1360,3 +1357,140 @@
+ 		local-bd-address = [ 55 24 f1 37 00 02 ];
+ 	};
+ };
++
++/*
++ * DisplayPort alternate mode over USB-C, and USB host support.
++ *
++ * The board dts previously forced this port to USB 2.0 peripheral-only,
++ * which ruled out both DP (it redirects the SuperSpeed lanes) and any
++ * attached keyboard or mouse.
++ *
++ * Everything below already exists upstream and only needed enabling and
++ * wiring: mdss_dp is in sm8250.dtsi already connected to dpu_intf0_out,
++ * usb_1_qmpphy is the USB3+DP combo phy, and pm8150b provides the Type-C
++ * port manager and VBUS regulator.
++ *
++ * Modelled on sm8250-lenovo-q706f.dts. That board has an NB7VPQ904M
++ * redriver between the connector and the phy; this one does not, so
++ * usb_1_qmpphy_out goes straight to the Type-C mux port.
++ *
++ * The FSA4480 SBU/orientation switch is at 0x42 on i2c1 per the stock
++ * OxygenOS devicetree (q706f uses 0x43).
++ */
++
++&usb_1_hsphy {
++	status = "okay";
++};
++
++&usb_1_qmpphy {
++	status = "okay";
++
++	vdda-phy-supply = <&vreg_l9a_1p2>;
++	vdda-pll-supply = <&vreg_l18a_0p92>;
++};
++
++&usb_1_dwc3_hs_out {
++	remote-endpoint = <&pm8150b_hs_in>;
++};
++
++&usb_1_qmpphy_out {
++	remote-endpoint = <&pm8150b_typec_mux_in>;
++};
++
++&usb_1_qmpphy_dp_in {
++	remote-endpoint = <&mdss_dp_out>;
++};
++
++&mdss_dp {
++	status = "okay";
++};
++
++&mdss_dp_out {
++	data-lanes = <0 1>;
++	remote-endpoint = <&usb_1_qmpphy_dp_in>;
++};
++
++&pm8150b_vbus {
++	regulator-min-microamp = <500000>;
++	regulator-max-microamp = <3000000>;
++	status = "okay";
++};
++
++&pm8150b_typec {
++	status = "okay";
++
++	vdd-pdphy-supply = <&vreg_l2a_3p1>;
++
++	connector {
++		compatible = "usb-c-connector";
++
++		op-sink-microwatt = <10000000>;
++		power-role = "dual";
++		data-role = "dual";
++		self-powered;
++
++		source-pdos = <PDO_FIXED(5000, 3000,
++				PDO_FIXED_DUAL_ROLE |
++				PDO_FIXED_USB_COMM |
++				PDO_FIXED_DATA_SWAP)>;
++
++		sink-pdos = <PDO_FIXED(5000, 3000,
++				PDO_FIXED_DUAL_ROLE |
++				PDO_FIXED_USB_COMM |
++				PDO_FIXED_DATA_SWAP)>;
++
++		altmodes {
++			displayport {
++				svid = /bits/ 16 <0xff01>;
++				vdo = <0x00001c46>;
++			};
++		};
++
++		ports {
++			#address-cells = <1>;
++			#size-cells = <0>;
++
++			port@0 {
++				reg = <0>;
++
++				pm8150b_hs_in: endpoint {
++					remote-endpoint = <&usb_1_dwc3_hs_out>;
++				};
++			};
++
++			port@1 {
++				reg = <1>;
++
++				pm8150b_typec_mux_in: endpoint {
++					remote-endpoint = <&usb_1_qmpphy_out>;
++				};
++			};
++
++			port@2 {
++				reg = <2>;
++
++				pm8150b_typec_sbu_out: endpoint {
++					remote-endpoint = <&fsa4480_sbu_mux>;
++				};
++			};
++		};
++	};
++};
++
++&i2c1 {
++	/* SBU / orientation switch, also used for analogue USB-C audio */
++	typec-mux@42 {
++		compatible = "fcs,fsa4480";
++		reg = <0x42>;
++
++		vcc-supply = <&vreg_bob>;
++		mode-switch;
++		orientation-switch;
++
++		port {
++			fsa4480_sbu_mux: endpoint {
++				remote-endpoint = <&pm8150b_typec_sbu_out>;
++			};
++		};
++	};
++};

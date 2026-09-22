@@ -1,0 +1,73 @@
+From f4b84b7ad5b17ae4c4e0ac01018c61d14847ffe9 Mon Sep 17 00:00:00 2001
+From: kebab bring-up <local@invalid>
+Date: Fri, 18 Sep 2026 12:20:00 +0200
+Subject: [PATCH] kebab: imx471 TEMP DIAG (0079) -- redo full bus scan, correct
+ VANA + 400kHz
+
+Re-applies the 0075 in-driver full-bus scan (reverted by 0076), because
+both previous scans are now known to have run under broken conditions and
+neither can be trusted:
+
+  0070 -- ran with the CCI1 controller clock at 19.2MHz against a timing
+          table calibrated for 37.5MHz (fixed later by 0072), and with
+          VANA inverted.
+  0075 -- ran with the clock corrected, but still with VANA inverted by
+          patch 0060: gpio156 was declared GPIO_ACTIVE_LOW, so enabling
+          the regulator drove the pin low and switched the sensor's
+          analog rail OFF for the whole scan. Fixed by 0077.
+
+Both scans thus swept the address space with the sensor unpowered, which
+is why only the EEPROM at 0x50/0x58 -- fed from always-on pm8008_l4 VIO,
+not VANA -- ever answered. Their silence says nothing about the sensor.
+
+This run is the first with VANA actually asserted during the window
+(verified live: gpio156 observed toggling low->high across a rebind) and
+the first at an in-spec 400kHz (0078).
+
+Note a userspace i2cdetect cannot substitute for this: outside the
+driver's power window the regulator is disabled and VANA is off, so the
+sensor is unpowered for any scan run from the shell. It has to happen
+inside imx471_power_on().
+
+Temporary. Revert once the sensor is identified or ruled out.
+---
+ drivers/media/i2c/imx471.c | 23 +++++++++++++++++++++++
+ 1 file changed, 23 insertions(+)
+
+diff --git a/drivers/media/i2c/imx471.c b/drivers/media/i2c/imx471.c
+index 8cca49580..4f48f75b6 100644
+--- a/drivers/media/i2c/imx471.c
++++ b/drivers/media/i2c/imx471.c
+@@ -576,6 +576,29 @@ static int imx471_power_on(struct device *dev)
+ 	 * app doesn't stall for 3s once the hardware is sorted. */
+ 	usleep_range(50000, 60000);
+ 
++	/* TEMP DIAGNOSTIC (0075, remove once camera works): the 0070 scan
++	 * above ran while the CCI1 clock was still misconfigured at 19.2MHz
++	 * instead of the 37.5MHz the CCI v2 timing table assumes (fixed in
++	 * patch 0072) -- so that scan's silence is not trustworthy evidence
++	 * of a dead bus. Redo it now, fully powered/clocked/reset-released,
++	 * with the corrected clock rate, and log every address that ACKs. */
++	{
++		struct i2c_client *client = to_i2c_client(dev);
++		struct i2c_adapter *adap = client->adapter;
++		int addr;
++
++		dev_info(dev, "imx471 TEMP DIAG (0075): full bus scan while powered, corrected clock\n");
++		for (addr = 0x08; addr <= 0x77; addr++) {
++			union i2c_smbus_data data;
++			int scan_ret = i2c_smbus_xfer(adap, addr, 0,
++						      I2C_SMBUS_READ, 0,
++						      I2C_SMBUS_BYTE, &data);
++			if (scan_ret >= 0)
++				dev_info(dev, "imx471 TEMP DIAG (0075): addr 0x%02x ACKED\n", addr);
++		}
++		dev_info(dev, "imx471 TEMP DIAG (0075): scan complete\n");
++	}
++
+ 	return 0;
+ }
+ 
+-- 
+2.55.0
+

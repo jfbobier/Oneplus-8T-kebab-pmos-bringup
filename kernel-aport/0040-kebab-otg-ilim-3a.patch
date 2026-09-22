@@ -1,0 +1,38 @@
+--- a/drivers/regulator/mp2762-otg-regulator.c
++++ b/drivers/regulator/mp2762-otg-regulator.c
+@@ -10,7 +10,17 @@
+ 
+ #define MP2762_REG07_OTG_ILIM		0x07
+ #define MP2762_REG07_OTG_ILIM_MASK	GENMASK(3, 0)
++/*
++ * REG07[3:0] is the OTG current limit in 250 mA steps, so 1500/250 = 6 is
++ * what stock op_mp2650.c programs. kebab: raised to 3 A (3000/250 = 12) to
++ * test whether inrush limiting is why the boost is slow - vSafe5V was
++ * measured arriving between 550 ms and ~1.1 s, well outside the Type-C
++ * tSrcTurnOn budget of 275 ms, and a 1.5 A cap charging a hub's bulk
++ * capacitance is the obvious suspect. If this does not move the ramp,
++ * go back to 0x06: matching stock is worth more than a guess.
++ */
+ #define MP2762_REG07_OTG_ILIM_1500MA	0x06
++#define MP2762_REG07_OTG_ILIM_3000MA	0x0c
+ 
+ #define MP2762_REG08_CTRL		0x08
+ #define MP2762_REG08_OTG_EN		BIT(5)
+@@ -57,7 +67,7 @@
+ 
+ 	ret = mp2762_update(chg->client, MP2762_REG07_OTG_ILIM,
+ 			     MP2762_REG07_OTG_ILIM_MASK,
+-			     MP2762_REG07_OTG_ILIM_1500MA);
++			     MP2762_REG07_OTG_ILIM_3000MA);
+ 	if (ret < 0)
+ 		goto err_gpio;
+ 
+@@ -75,7 +85,7 @@
+ 		goto err_gpio;
+ 	}
+ 
+-	dev_info(&chg->client->dev, "OTG VBUS enabled (5V, 2S pack, 1.5A ilim)\n");
++	dev_info(&chg->client->dev, "OTG VBUS enabled (5V, 2S pack, 3A ilim)\n");
+ 	return 0;
+ 
+ err_gpio:

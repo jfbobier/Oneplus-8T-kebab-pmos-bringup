@@ -1,0 +1,56 @@
+--- a/drivers/gpu/drm/msm/dp/dp_panel.h
++++ b/drivers/gpu/drm/msm/dp/dp_panel.h
+@@ -27,6 +27,17 @@
+ 	u8 capabilities;
+ };
+ 
++/*
++ * Fraction of the raw 8b/10b link payload a video stream may occupy.
++ *
++ * lanes * rate * 8 is the payload *before* blanking symbols, MSA and
++ * transfer-unit stuffing are accounted for, so a mode sized against it has no
++ * headroom at all. Measured on sm8250 (OnePlus 8T): a stream at 93% of that
++ * figure trains and then delivers no frames, 89% gives a black screen, 75% is
++ * solid. Keep a margin so such modes are clamped or refused up front.
++ */
++#define DP_LINK_BW_MARGIN_PCT	85
++
+ struct msm_dp_panel {
+ 	/* dpcd raw data */
+ 	u8 dpcd[DP_RECEIVER_CAP_SIZE];
+--- a/drivers/gpu/drm/msm/dp/dp_panel.c
++++ b/drivers/gpu/drm/msm/dp/dp_panel.c
+@@ -221,7 +221,8 @@
+ 	bpp = min(mode_edid_bpp, max_supported_bpp);
+ 
+ 	link_info = &msm_dp_panel->link_info;
+-	data_rate_khz = link_info->num_lanes * link_info->rate * 8;
++	data_rate_khz = mult_frac(link_info->num_lanes * link_info->rate * 8,
++				  DP_LINK_BW_MARGIN_PCT, 100);
+ 
+ 	do {
+ 		if (mode_pclk_khz * bpp <= data_rate_khz)
+--- a/drivers/gpu/drm/msm/dp/dp_display.c
++++ b/drivers/gpu/drm/msm/dp/dp_display.c
+@@ -725,11 +725,20 @@
+ 			mode_bpp, mode_pclk_khz);
+ 
+ 	mode_rate_khz = mode_pclk_khz * mode_bpp;
+-	supported_rate_khz = link_info->num_lanes * link_info->rate * 8;
++	supported_rate_khz = mult_frac(link_info->num_lanes * link_info->rate * 8,
++				       DP_LINK_BW_MARGIN_PCT, 100);
+ 
+ 	if (mode_rate_khz > supported_rate_khz)
+ 		return MODE_BAD;
+ 
++	/*
++	 * Only advertise a mode if it fits at 8 bpc or better. Falling back
++	 * to 6-bit colour to squeeze a high mode onto a narrow link looks
++	 * worse than offering the same resolution at a lower refresh rate.
++	 */
++	if (mode_bpp < 24)
++		return MODE_BAD;
++
+ 	return MODE_OK;
+ }
+ 

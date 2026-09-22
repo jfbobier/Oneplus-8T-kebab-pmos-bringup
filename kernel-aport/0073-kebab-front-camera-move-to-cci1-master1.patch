@@ -1,0 +1,41 @@
+From 885eaff443426a3d78e18b32b6084af983023cb5 Mon Sep 17 00:00:00 2001
+From: kebab bring-up <local@invalid>
+Date: Thu, 17 Sep 2026 13:23:54 +0200
+Subject: [PATCH] kebab: move front camera (IMX471) from cci1_i2c0 to cci1_i2c1
+
+The vendor OEM devicetree for this exact device (kona-oem-camera-kebab_t0.dtsi,
+qcom,cam-sensor@2 'Front cam: IMX471') specifies cci-master = <1> for both
+the front sensor and its EEPROM (eeprom_front_0), within the &cam_cci1 block
+(qcom,cci@ac50000 -- confirmed identical to mainline's cci1). In mainline's
+i2c-bus@N child-node binding, master index 1 corresponds to i2c-bus@1
+(cci1_i2c1, /dev/i2c-24 on kebab), not i2c-bus@0 (cci1_i2c0, /dev/i2c-23,
+where the mainline port originally placed it in patch 0059).
+
+With the CCI1 clock rate now correctly pinned to 37.5MHz (patch 0072) and
+full driver-mediated power/reset sequencing confirmed correct, the sensor
+still fails chip-id reads with -ENXIO on cci1_i2c0/0x1a, while cci1_i2c0
+does answer at plausible EEPROM addresses (0x50/0x58) and cci1_i2c1 answers
+at different addresses (0x54/0x5c) under a cold (unpowered) scan. Since the
+sensor's own power/clock/reset only ever ran against cci1_i2c0 so far, a
+cold scan of cci1_i2c1 cannot rule the sensor in or out there -- this patch
+tests the vendor-specified bus for real, with full power sequencing active.
+---
+ arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
+index ad2068ad1..c79c705d0 100644
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
+@@ -1995,7 +1995,7 @@ csiphy4_front_ep: endpoint {
+ 	};
+ };
+ 
+-&cci1_i2c0 {
++&cci1_i2c1 {
+ 	camf_imx471: camera@1a {
+ 		compatible = "sony,imx471";
+ 		reg = <0x1a>;
+-- 
+2.55.0
+

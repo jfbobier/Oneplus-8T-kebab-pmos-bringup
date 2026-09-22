@@ -1,0 +1,45 @@
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
+@@ -1558,3 +1558,42 @@
+ 		};
+ 	};
+ };
++
++/*
++ * ESOC sideband liveness signalling for the SDX55 modem.
++ *
++ * Stock OxygenOS drives four GPIOs between the AP and the modem via Qualcomm's
++ * ESOC framework (qcom,mdm0 / "qcom,ext-sdx55m"), which mainline does not have:
++ *
++ *   ap2mdm-status   gpio56   AP tells the modem it is alive
++ *   ap2mdm-errfatal gpio57   AP tells the modem it has crashed
++ *   mdm2ap-status   gpio3    modem tells the AP it is alive
++ *   mdm2ap-errfatal gpio1    modem tells the AP it has crashed
++ *
++ * With the Sahara loader in place the modem now accepts its entire boot chain
++ * (all 15 images, including the 84 MB qdsp6sw payload, each END_OF_IMAGE OK)
++ * and then stays in SBL: BHI_EXECENV reads 0x1 and it never raises the AMSS
++ * execution-environment event, while remaining alive at M0.
++ *
++ * Hypothesis under test: the SBL waits for the AP to assert ap2mdm-status
++ * before jumping to AMSS. Hogging the two AP-to-modem lines to their
++ * "AP is up and healthy" levels exercises that without porting all of ESOC.
++ * If this is what the SBL wants, this is the whole fix; if not, ESOC proper
++ * (drivers/remoteproc/esoc*) is the next step and these hogs must be dropped,
++ * since ESOC claims the same lines.
++ */
++&tlmm {
++	ap2mdm-status-hog {
++		gpio-hog;
++		gpios = <56 GPIO_ACTIVE_HIGH>;
++		output-high;
++		line-name = "ap2mdm-status";
++	};
++
++	ap2mdm-errfatal-hog {
++		gpio-hog;
++		gpios = <57 GPIO_ACTIVE_HIGH>;
++		output-low;
++		line-name = "ap2mdm-errfatal";
++	};
++};

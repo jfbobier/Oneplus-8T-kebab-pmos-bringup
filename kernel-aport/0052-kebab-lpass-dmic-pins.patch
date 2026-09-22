@@ -1,0 +1,28 @@
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts	2026-09-16 15:58:10.712498485 +0200
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts	2026-09-16 15:58:10.722584429 +0200
+@@ -1757,3 +1757,25 @@
+ 		};
+ 	};
+ };
++
++/*
++ * LPASS DMIC bring-up.  kebab's primary (handset) microphone is a digital mic
++ * on the LPI pins, not an analog capsule on AMIC1: stock mixer_paths.xml maps
++ * "handset-mic" to "dmic2", which sets TX DMIC MUX2 = DMIC1 on TX_CDC_DMA_TX_3.
++ *
++ * Nothing muxed gpio6 / gpio7 (dmic1_clk / dmic1_data) before this, so every
++ * DMIC capture returned bit-exact zero.  Only lpass-va-macro reads
++ * qcom,dmic-sample-rate; the value and the whole arrangement follow
++ * sm8250-xiaomi-apollo.dts, which is proven on this SoC under postmarketOS.
++ *
++ * The pin state deliberately lives on vamacro and NOT on txmacro: txmacro
++ * already owns gpio0-2 through tx_swr_active, and a second consumer claiming
++ * gpio6 / gpio7 there risks -EBUSY at probe, which would take the SoundWire TX
++ * bus and the working speaker path down with it.
++ */
++&vamacro {
++	pinctrl-names = "default";
++	pinctrl-0 = <&dmic01_active>;
++	vdd-micb-supply = <&vreg_s4a_1p8>;
++	qcom,dmic-sample-rate = <600000>;
++};

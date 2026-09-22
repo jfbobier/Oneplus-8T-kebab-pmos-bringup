@@ -1,0 +1,23 @@
+[Unit]
+Description=SDX55 remote EFS (Sahara memory-debug) service
+# The SDX55 firmware is an RMTEFS build and expects the AP to host its
+# filesystem; Android does this with /vendor/bin/ks on MHI channel 10.
+# Unserviced, the modem's EFS is read-only/RAM-backed from the static Sahara
+# efs{1,2,3}.bin images, it ERRFATALs ~73 s after its first EFS-Sync, and its
+# NV never persists.
+#
+# Deliberately NOT using Android's "-w /dev/block/... -g mdm1" form, which
+# writes exported regions straight onto the mdm1m9kefsN partitions. Writing to
+# a plain directory first keeps this device's real IMEI/RF-calibration flash
+# untouched while we confirm the fix.
+After=systemd-udevd.service
+Wants=systemd-udevd.service
+
+[Service]
+Type=simple
+ExecStart=/bin/sh -c 'for i in $(seq 1 180); do [ -e /dev/wwan0efs0 ] && break; sleep 1; done; exec /usr/bin/mhi_efs_sync -v -o /var/lib/mhi-efs'
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

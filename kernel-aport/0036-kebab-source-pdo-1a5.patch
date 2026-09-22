@@ -1,0 +1,19 @@
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
+@@ -1501,7 +1501,15 @@
+ 		try-power-role = "sink";
+ 		self-powered;
+ 
+-		source-pdos = <PDO_FIXED(5000, 3000,
++		/*
++		 * 1.5 A, not 3 A: the MP2762A OTG current limit is set to
++		 * REG07[3:0] = 6 = 1500 mA, matching stock op_mp2650.c. We were
++		 * advertising 5 V @ 3 A that the hardware cannot source, so a
++		 * sink taking us at our word would brown the rail out. The field
++		 * does support up to 3 A - if that is ever wanted, raise the
++		 * ilim in the driver and this PDO together, never one alone.
++		 */
++		source-pdos = <PDO_FIXED(5000, 1500,
+ 				PDO_FIXED_DUAL_ROLE |
+ 				PDO_FIXED_USB_COMM |
+ 				PDO_FIXED_DATA_SWAP)>;

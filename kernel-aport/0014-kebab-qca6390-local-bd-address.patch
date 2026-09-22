@@ -1,0 +1,29 @@
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
+@@ -1337,3 +1337,26 @@
+ &pcie2 {
+ 	msi-parent = <&intc>;
+ };
++
++/*
++ * The QCA6390 comes up with the placeholder address baked into
++ * qca/htnv20.bin:
++ *
++ *     BD Address: 00:00:00:00:5A:AD     DOWN RAW
++ *     Can't init device hci0: Not supported (95)
++ *
++ * An invalid address keeps the controller in RAW mode, so bluetoothd never
++ * registers an adapter even though hci0 exists and firmware loaded fine.
++ *
++ * 02:00:37:F1:24:55 is locally administered. The device's original address was not
++ * found -- both persist partitions hold only sensor data -- and nothing
++ * here depends on it matching the one on the box.
++ *
++ * Bytes are in reverse order, as the binding requires.
++ */
++
++&uart6 {
++	bluetooth {
++		local-bd-address = [ 55 24 f1 37 00 02 ];
++	};
++};

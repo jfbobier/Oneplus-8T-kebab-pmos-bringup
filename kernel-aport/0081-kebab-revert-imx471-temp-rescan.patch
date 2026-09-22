@@ -1,0 +1,68 @@
+From 3f42df37fd9bb7eb61094c493fc5a6e49758576e Mon Sep 17 00:00:00 2001
+From: kebab bring-up <local@invalid>
+Date: Fri, 18 Sep 2026 12:51:01 +0200
+Subject: [PATCH] kebab: revert the 0079 imx471 temporary bus scan
+
+0079 has now been run three times under progressively corrected
+conditions and has given its answer:
+
+  VANA fixed (0077), 1MHz bus      -> 0x50, 0x58 ACK. Sensor silent.
+  VANA fixed, 400kHz bus (0078)    -> 0x50, 0x58 ACK. Sensor silent.
+  VANA fixed, 400kHz, VDIG 1.104V  -> 0x50, 0x58 ACK. Sensor silent.
+    (0080)
+
+The intervening 1.1V attempt is excluded: it broke the pm8008 regulator
+probe outright and unpowered the whole bus, so its all-timeout result
+carries no information.
+
+Every controllable variable now matches the vendor description of this
+board and each has been verified on the running system rather than
+assumed: VANA polarity and actual assertion, reset polarity and actual
+release, MCLK4 rate and pin mux, CCI controller clock, CCI bus rate, and
+cam_vio / cam_vdig voltages. Under all of them the sensor does not
+acknowledge its address anywhere in 0x08-0x77, while the module EEPROM
+on the same logical bus answers every time.
+
+Drop the diagnostic. Keep 0077, 0078 and 0080, which are correctness
+fixes on their own merits independent of the camera outcome.
+---
+ drivers/media/i2c/imx471.c | 23 -----------------------
+ 1 file changed, 23 deletions(-)
+
+diff --git a/drivers/media/i2c/imx471.c b/drivers/media/i2c/imx471.c
+index 4f48f75b6..8cca49580 100644
+--- a/drivers/media/i2c/imx471.c
++++ b/drivers/media/i2c/imx471.c
+@@ -576,29 +576,6 @@ static int imx471_power_on(struct device *dev)
+ 	 * app doesn't stall for 3s once the hardware is sorted. */
+ 	usleep_range(50000, 60000);
+ 
+-	/* TEMP DIAGNOSTIC (0075, remove once camera works): the 0070 scan
+-	 * above ran while the CCI1 clock was still misconfigured at 19.2MHz
+-	 * instead of the 37.5MHz the CCI v2 timing table assumes (fixed in
+-	 * patch 0072) -- so that scan's silence is not trustworthy evidence
+-	 * of a dead bus. Redo it now, fully powered/clocked/reset-released,
+-	 * with the corrected clock rate, and log every address that ACKs. */
+-	{
+-		struct i2c_client *client = to_i2c_client(dev);
+-		struct i2c_adapter *adap = client->adapter;
+-		int addr;
+-
+-		dev_info(dev, "imx471 TEMP DIAG (0075): full bus scan while powered, corrected clock\n");
+-		for (addr = 0x08; addr <= 0x77; addr++) {
+-			union i2c_smbus_data data;
+-			int scan_ret = i2c_smbus_xfer(adap, addr, 0,
+-						      I2C_SMBUS_READ, 0,
+-						      I2C_SMBUS_BYTE, &data);
+-			if (scan_ret >= 0)
+-				dev_info(dev, "imx471 TEMP DIAG (0075): addr 0x%02x ACKED\n", addr);
+-		}
+-		dev_info(dev, "imx471 TEMP DIAG (0075): scan complete\n");
+-	}
+-
+ 	return 0;
+ }
+ 
+-- 
+2.55.0
+

@@ -1,0 +1,27 @@
+--- a/sound/soc/codecs/wcd938x.c	2026-09-16 15:22:32.950797103 +0200
++++ b/sound/soc/codecs/wcd938x.c	2026-09-16 15:22:32.971964782 +0200
+@@ -1167,6 +1167,8 @@
+ 	return ret;
+ }
+ 
++static void wcd938x_tx_channel_config(struct snd_soc_component *component, int channel, int mode);
++
+ static int wcd938x_codec_enable_adc(struct snd_soc_dapm_widget *w,
+ 				    struct snd_kcontrol *kcontrol, int event)
+ {
+@@ -1184,6 +1186,15 @@
+ 					      WCD938X_DIGITAL_CDC_ANA_CLK_CTL,
+ 					      WCD938X_ANA_TX_DIV2_CLK_EN_MASK, 1);
+ 		set_bit(w->shift, &wcd938x->status_mask);
++		/*
++		 * The vendor driver pulses this channel's HPF init bit on
++		 * every analog TX enable: tx_channel_config(ch, 1) early in
++		 * PRE_PMU and (ch, 0) at the end of it.  Mainline only does
++		 * that on the DMIC path, so an AMIC capture runs with the
++		 * channel's high-pass filter never initialised.
++		 */
++		wcd938x_tx_channel_config(component, w->shift, 1);
++		wcd938x_tx_channel_config(component, w->shift, 0);
+ 		break;
+ 	case SND_SOC_DAPM_POST_PMD:
+ 		snd_soc_component_write_field(component, WCD938X_DIGITAL_CDC_ANA_CLK_CTL,

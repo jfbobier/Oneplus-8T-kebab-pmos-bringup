@@ -1,0 +1,40 @@
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
+@@ -782,25 +782,26 @@
+ };
+ 
+ &usb_1 {
+-	/* USB 2.0 only */
+-	qcom,select-utmi-as-pipe-clk;
++	/* USB 2.0 + 3.0; the pipe clock is parented to the QMP combo PHY */
+ 	status = "okay";
+ };
+ 
+ &usb_1_dwc3 {
+ 	/*
+-	 * USB 2.0 OTG. Host role is required for DP altmode (dp_altmode_probe
+-	 * rejects anything but TYPEC_HOST with -EPROTO), but USB3 is not: DP rides
+-	 * the QMP PHY's DP block, so the HS-only phy list and
+-	 * qcom,select-utmi-as-pipe-clk both stay. That keeps dwc3 off
+-	 * GCC_USB3_PRIM_PHY_PIPE_CLK, which is what hung the boot when the full
+-	 * super-speed switch was attempted.
++	 * USB 2.0 + 3.0 OTG. Host role is required for DP altmode
++	 * (dp_altmode_probe rejects anything but TYPEC_HOST with -EPROTO).
++	 * SuperSpeed is enabled here. The reason the earlier attempt hung the
++	 * boot was that GCC_USB3_PRIM_PHY_PIPE_CLK had no live parent while the
++	 * QMP combo PHY's USB3 side was down; that precondition is gone since
++	 * 0018 brought the PHY up and DisplayPort proved it works, so
++	 * qcom,select-utmi-as-pipe-clk is dropped from &usb_1 above.
++	 * Pin assignment D carries 2 DP lanes + USB3 at the same time. Never
++	 * force pin assignment C - that takes the dock's USB3 lanes away (5.5).
+ 	 */
+ 	dr_mode = "otg";
+ 	usb-role-switch;
+-	maximum-speed = "high-speed";
+-	phys = <&usb_1_hsphy>;
+-	phy-names = "usb2-phy";
++	phys = <&usb_1_hsphy>, <&usb_1_qmpphy QMP_USB43DP_USB3_PHY>;
++	phy-names = "usb2-phy", "usb3-phy";
+ };
+ 
+ &usb_1_dwc3_hs_out {

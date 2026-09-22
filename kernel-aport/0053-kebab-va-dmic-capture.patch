@@ -1,0 +1,47 @@
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts	2026-09-16 16:13:46.647789641 +0200
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts	2026-09-16 16:13:46.660942859 +0200
+@@ -1268,7 +1268,9 @@
+ 		"TX SWR_ADC0", "ADC1_OUTPUT",
+ 		"TX SWR_ADC1", "ADC2_OUTPUT",
+ 		"TX SWR_ADC2", "ADC3_OUTPUT",
+-		"TX SWR_ADC3", "ADC4_OUTPUT";
++		"TX SWR_ADC3", "ADC4_OUTPUT",
++		"VA DMIC0", "MIC BIAS1",
++		"VA DMIC1", "MIC BIAS1";
+ 
+ 	mm1-dai-link {
+ 		link-name = "MultiMedia1";
+@@ -1318,6 +1320,22 @@
+ 		};
+ 	};
+ 
++	va-dai-link {
++		link-name = "VA Capture";
++
++		cpu {
++			sound-dai = <&q6afedai VA_CODEC_DMA_TX_0>;
++		};
++
++		platform {
++			sound-dai = <&q6routing>;
++		};
++
++		codec {
++			sound-dai = <&vamacro 0>;
++		};
++	};
++
+ 	/*
+ 	 * Tertiary MI2S carries the two TFA9874 speaker amps. Both amps sit on
+ 	 * the same frame and each picks its own channel, so this is a single
+@@ -1377,6 +1395,10 @@
+ 		reg = <TERTIARY_MI2S_RX>;
+ 		qcom,sd-lines = <1>;
+ 	};
++
++	dai@6e {
++		reg = <VA_CODEC_DMA_TX_0>;
++	};
+ };
+ 
+ /* kebab-sdx55-gic-mbi-test

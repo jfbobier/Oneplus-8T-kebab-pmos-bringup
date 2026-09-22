@@ -1,0 +1,6 @@
+ACTION!="add|change|move|bind", GOTO="mm_sdx55_fusion_end"
+SUBSYSTEM=="wwan", ATTRS{vendor}=="0x17cb", ATTRS{device}=="0x0306", ENV{ID_MM_QCOM_SOC}="1", ENV{ID_MM_PHYSDEV_UID}="qcom-soc"
+SUBSYSTEM=="wwan", KERNEL=="*qmi*", ATTRS{vendor}=="0x17cb", ATTRS{device}=="0x0306", ENV{ID_MM_PORT_IGNORE}="1"
+SUBSYSTEM=="net", KERNEL=="mhi_hwip*", ENV{ID_MM_CANDIDATE}="1", ENV{ID_MM_QCOM_SOC}="1", ENV{ID_MM_PHYSDEV_UID}="qcom-soc"
+SUBSYSTEM=="net", KERNEL=="mhi_swip*", ENV{ID_MM_CANDIDATE}="1", ENV{ID_MM_QCOM_SOC}="1", ENV{ID_MM_PHYSDEV_UID}="qcom-soc"
+LABEL="mm_sdx55_fusion_end"

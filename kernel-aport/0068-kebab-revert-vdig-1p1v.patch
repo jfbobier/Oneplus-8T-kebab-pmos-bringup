@@ -1,0 +1,15 @@
+diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
+index 4343bae58..949cf5197 100644
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
+@@ -1898,8 +1898,8 @@ L1P: ldo1 {
+ 				 * for cam_vdig are both 0x10c8e0 = 1100000uV exactly -- not a
+ 				 * range. Pin it instead of leaving it to float to this
+ 				 * range's max (1.2V), which was 100mV over vendor spec. */
+-				regulator-min-microvolt = <1100000>;
+-				regulator-max-microvolt = <1100000>;
++				regulator-min-microvolt = <528000>;
++				regulator-max-microvolt = <1200000>;
+ 				/* cam_vdig for the front sensor (1.1V, per
+ 				 * kebab-19805-camera.dts's cam-sensor@2). imx471.c
+ 				 * only regulator_bulk_gets "vana" itself, so keep

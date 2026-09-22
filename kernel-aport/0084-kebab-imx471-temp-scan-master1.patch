@@ -1,0 +1,94 @@
+From fca4aff95764f3353c125fe7c94d18bf71bd4b75 Mon Sep 17 00:00:00 2001
+From: kebab bring-up <local@invalid>
+Date: Fri, 18 Sep 2026 13:49:21 +0200
+Subject: [PATCH] kebab: imx471 TEMP DIAG (0084) -- powered scan on CCI1 master
+ 1
+
+Re-adds an in-driver address scan, but for the first time on the bus the
+vendor actually assigns to the front camera.
+
+Every previous scan is disqualified:
+
+  0070  master 0, wrong CCI clock, VANA inverted   -> sensor unpowered
+  0075  master 0, clock fixed, VANA inverted       -> sensor unpowered
+  0079  master 0, VANA fixed                       -> wrong bus entirely
+
+0079 was run correctly but pointed at CCI1 master 0, which patch 0083
+established is the GC5035 macro camera's bus. The 0x50/0x58 that answered
+throughout belong to the GC5035's EEPROM, not the front module.
+
+This scan runs on master 1 with VANA polarity correct (0077), the vendor
+power sequence VANA->VDIG->VIO->MCLK->RESET (0082), and a 400kHz bus
+(0078/0083), after reset release and the 50-60ms settle.
+
+The addresses that matter are 0x54 and 0x5c: the front module's own
+EEPROM, fed from the same VIO/VDIG/VANA this driver now sequences and
+carried on the same flex as the image sensor. Three outcomes:
+
+  0x54/0x5c ACK, 0x1a silent  the module is present and powered, and the
+                              image sensor specifically does not answer.
+                              First correctly-targeted evidence for a
+                              sensor-level fault.
+
+  0x1a ACKs                   solved.
+
+  nothing ACKs                the fault is upstream of the module --
+                              rails, flex seating or the bus itself --
+                              and is not sensor-specific.
+
+Temporary. Revert once the question is settled.
+---
+ drivers/media/i2c/imx471.c | 37 +++++++++++++++++++++++++++++++++++++
+ 1 file changed, 37 insertions(+)
+
+diff --git a/drivers/media/i2c/imx471.c b/drivers/media/i2c/imx471.c
+index b960737ca..55b267e21 100644
+--- a/drivers/media/i2c/imx471.c
++++ b/drivers/media/i2c/imx471.c
+@@ -593,6 +593,43 @@ static int imx471_power_on(struct device *dev)
+ 	gpiod_set_value_cansleep(sensor->reset_gpio, 0);
+ 	usleep_range(50000, 60000);
+ 
++	/*
++	 * TEMP DIAGNOSTIC (0084, revert once resolved).
++	 *
++	 * Scan this adapter while the part is genuinely powered and out of
++	 * reset. This is the first time such a scan runs on the bus the vendor
++	 * actually assigns the front camera to (CCI1 master 1, patch 0083),
++	 * with correct VANA polarity (0077) and the vendor power sequence
++	 * (0082). Every earlier scan (0070, 0075, 0079) ran on master 0 --
++	 * the GC5035 macro camera's bus -- and/or with the sensor unpowered.
++	 *
++	 * What matters is 0x54/0x5c. Those are the front module's OWN EEPROM,
++	 * which shares this module's VIO/VDIG/VANA rails and sits on the same
++	 * flex. If they answer and 0x1a stays silent, the module is present
++	 * and powered while its image sensor specifically is not responding.
++	 * If nothing at all answers, the fault is upstream of the module.
++	 */
++	{
++		struct i2c_client *client = to_i2c_client(dev);
++		struct i2c_adapter *adap = client->adapter;
++		int addr, found = 0;
++
++		dev_info(dev, "imx471 DIAG(0084): powered scan of %s\n",
++			 adap->name);
++		for (addr = 0x08; addr <= 0x77; addr++) {
++			union i2c_smbus_data data;
++
++			if (i2c_smbus_xfer(adap, addr, 0, I2C_SMBUS_READ, 0,
++					   I2C_SMBUS_BYTE, &data) >= 0) {
++				dev_info(dev, "imx471 DIAG(0084): 0x%02x ACKED\n",
++					 addr);
++				found++;
++			}
++		}
++		dev_info(dev, "imx471 DIAG(0084): scan done, %d device(s)\n",
++			 found);
++	}
++
+ 	return 0;
+ 
+ err_supplies:
+-- 
+2.55.0
+

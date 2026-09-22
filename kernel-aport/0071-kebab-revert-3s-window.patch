@@ -1,0 +1,24 @@
+diff --git a/drivers/media/i2c/imx471.c b/drivers/media/i2c/imx471.c
+index 40b35634f..8cca49580 100644
+--- a/drivers/media/i2c/imx471.c
++++ b/drivers/media/i2c/imx471.c
+@@ -569,13 +569,12 @@ static int imx471_power_on(struct device *dev)
+ 	usleep_range(5000, 10000);
+ 	gpiod_set_value_cansleep(sensor->reset_gpio, 0);
+ 
+-	/* TEMP DIAGNOSTIC (0070, remove once camera works): extended to a
+-	 * full 3 seconds (from 0064's 50-60ms) to open a wide, unambiguous
+-	 * window -- reset released, clock+regulators confirmed up -- for an
+-	 * external full-bus i2c scan to run concurrently and check whether
+-	 * *anything* answers while the sensor is genuinely active, not just
+-	 * address 0x1a specifically. */
+-	usleep_range(3000000, 3010000);
++	/* 0070's 3s diagnostic window confirmed nothing answers at any
++	 * address during this window (184 full-bus scan passes, only the
++	 * EEPROM at 0x50/0x58 ever acks) -- pointing to a hardware fault,
++	 * not a timing issue. Back to a sane 50-60ms so opening the camera
++	 * app doesn't stall for 3s once the hardware is sorted. */
++	usleep_range(50000, 60000);
+ 
+ 	return 0;
+ }

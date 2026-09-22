@@ -1,0 +1,26 @@
+[Unit]
+Description=SDX55 remote filesystem (upstream tqftpserv, patched for QRTR instance 3)
+# Upstream tqftpserv hardcodes qrtr_publish(fd, 4096, 1, 0) -> QRTR instance 1,
+# but the PCIe-attached SDX55 looks up instance 3 ("name = [sid = 4096,
+# iid = 3]" in its own F3 log) and so never resolves it. This runs a build
+# patched to publish instance 3, plus a send-retry fix for the modem's
+# negotiated blksize=7680 x wsize=10 windows.
+#
+# kebab differs from apollo: this is an A/B device, so the modem firmware
+# partition is modem_a, not modem.
+After=systemd-udevd.service local-fs.target
+Wants=systemd-udevd.service
+Before=ModemManager.service
+Conflicts=tqftpserv.service
+
+[Service]
+Type=simple
+ExecStartPre=/bin/sh -c 'mkdir -p /mnt/modemfw /var/lib/tqftpserv'
+ExecStartPre=/bin/sh -c 'mountpoint -q /mnt/modemfw || mount -o ro /dev/disk/by-partlabel/modem_a /mnt/modemfw'
+ExecStartPre=/bin/sh -c '[ -e /lib/firmware/qcom/sdx55m/modem_pr ] || ln -s /mnt/modemfw/image/modem_pr /lib/firmware/qcom/sdx55m/modem_pr'
+ExecStart=/usr/bin/tqftpserv-sdx55 -d
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

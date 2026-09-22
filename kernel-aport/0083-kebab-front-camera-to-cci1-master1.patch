@@ -1,0 +1,100 @@
+From fbd34a3c31a2db98889811650b20aec3cbcc06ac Mon Sep 17 00:00:00 2001
+From: kebab bring-up <local@invalid>
+Date: Fri, 18 Sep 2026 13:33:30 +0200
+Subject: [PATCH] kebab: move front IMX471 to CCI1 master 1, where the vendor
+ puts it
+
+The vendor devicetree for this exact board states the front camera's CCI
+master twice, once for the sensor and once for its EEPROM
+(kona-oem-camera-kebab_t0.dtsi, under &cam_cci1):
+
+  eeprom_front_0: qcom,eeprom@2    cci-master = <1>   /* Front cam: IMX471 */
+  qcom,cam-sensor@2                cci-master = <1>   /* Front cam: IMX471 */
+  eeprom_rear_2:  qcom,eeprom@3    cci-master = <0>   /* Micro: GC5035   */
+  qcom,cam-sensor@3                cci-master = <0>   /* Micro: GC5035   */
+
+Master 0 of CCI1 is the GC5035 macro camera, not the front camera. A live
+scan of both child buses agrees with that split:
+
+  i2c-23  (cci1 master 0)  ->  0x50, 0x58
+  i2c-24  (cci1 master 1)  ->  0x54, 0x5c
+
+This matters for more than just addressing. The EEPROM at 0x50/0x58 that
+has been ACKing next to our sensor node since 0059, and that every
+previous session cited as proof that "the bus is electrically alive, so
+the silent device must be a dead sensor", belongs to the GC5035. It was
+never the IMX471's EEPROM. The front module's own EEPROM is at 0x54/0x5c
+on master 1, a bus we have not had the sensor on.
+
+Patch 0059 put the sensor on master 0; 0073 moved it to master 1 and 0074
+moved it back. Neither of the two arguments for master 0 holds up:
+
+ - 0073's -ENXIO is void. It ran on 2026-09-17, before 0077, so VANA was
+   still inverted by 0060 and the sensor's analog rail was switched off
+   for the entire transaction. Like the 0070/0075 scans and the 0066 VDIG
+   result, it measured an unpowered part.
+
+ - The stock module identifier "imx471_p24c64e" implies a 24C64-family
+   EEPROM somewhere in 0x50-0x57, and that was read as pointing at the
+   0x50 on master 0. It does not discriminate: 0x54 on master 1 is just
+   as much inside that range, and the vendor DT says master 1 explicitly.
+
+Move the node to cci1_i2c1 and carry the 400kHz fast-mode rate with it.
+The client will enumerate as 24-001a rather than 23-001a.
+---
+ .../boot/dts/qcom/sm8250-oneplus-kebab.dts    | 37 +++++++++++++------
+ 1 file changed, 25 insertions(+), 12 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
+index eba02a274..77ba5549e 100644
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
+@@ -2032,20 +2032,33 @@ csiphy4_front_ep: endpoint {
+ 	};
+ };
+ 
+-&cci1_i2c0 {
++&cci1_i2c1 {
+ 	/*
+-	 * Fast-mode (400kHz), not the 1MHz Fm+ that sm8250.dtsi defaults every
+-	 * CCI child bus to. Sony IMX-family sensors are specified for 400kHz
+-	 * I2C; the 24C64-style module EEPROM sharing this bus is an Fm+ part,
+-	 * which is why it kept ACKing at 1MHz while the sensor never did.
++	 * The front IMX471 lives on CCI1 master 1, not master 0. The vendor
++	 * devicetree for this board says so twice, for the sensor and for its
++	 * own EEPROM (kona-oem-camera-kebab_t0.dtsi):
+ 	 *
+-	 * Note this was never actually tested at a legal rate before: prior to
+-	 * patch 0072 the CCI v2 timing table was being fed 19.2MHz instead of
+-	 * the 37.5MHz it is calibrated for, so a requested 1MHz came out at
+-	 * roughly 1MHz * 19.2/37.5 ~= 512kHz -- still over spec. 0072 then
+-	 * corrected the timing reference and thereby raised real SCL to a true
+-	 * 1MHz, further over spec. Both full-bus scans (0070, 0075) ran under
+-	 * one or the other of those conditions.
++	 *   eeprom_front_0: qcom,eeprom@2   cci-master = <1>  / Front cam: IMX471
++	 *   qcom,cam-sensor@2               cci-master = <1>  / Front cam: IMX471
++	 *   eeprom_rear_2:  qcom,eeprom@3   cci-master = <0>  / Micro: GC5035
++	 *   qcom,cam-sensor@3               cci-master = <0>  / Micro: GC5035
++	 *
++	 * Master 0 belongs to the GC5035 macro camera. A live scan of both
++	 * buses agrees: i2c-23 (master 0) answers at 0x50/0x58, i2c-24
++	 * (master 1) answers at 0x54/0x5c. The EEPROM that has been ACKing
++	 * next to our sensor node all along, and which was read as evidence
++	 * that "the bus is alive so the sensor must be dead", is the GC5035's.
++	 *
++	 * Patch 0059 originally put the sensor on master 0, and 0073 tried
++	 * master 1 and was reverted by 0074. But 0073 ran before 0077, i.e.
++	 * while VANA was inverted and the sensor was unpowered for the whole
++	 * transaction, so its NACK carried no information. The other argument
++	 * for master 0 -- that the stock module id "imx471_p24c64e" implies a
++	 * 24C64 part in 0x50-0x57 -- does not discriminate either, because
++	 * 0x54 on master 1 is equally inside that range.
++	 *
++	 * Retest master 1 with correct VANA polarity, the vendor power
++	 * sequence and an in-spec bus rate.
+ 	 */
+ 	clock-frequency = <400000>;
+ 
+-- 
+2.55.0
+

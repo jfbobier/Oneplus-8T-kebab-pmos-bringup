@@ -1,0 +1,40 @@
+# Maintainer: kebab <kebab@example.com>
+pkgname=kebab-modem-tools
+pkgver=1.0
+pkgrel=1
+pkgdesc="Userspace services the SDX55 expects on the AP (OnePlus 8T / kebab)"
+url="https://github.com/royka1/Xiaomi-Apollo-pmOS-packages"
+arch="aarch64"
+license="GPL-2.0-only"
+makedepends="linux-headers"
+options="!check"
+source="
+	pm_service_native.c
+	diag_reader.c
+	pm-service-native.service
+"
+builddir="$srcdir"
+
+# pm_service_native answers the Peripheral Manager QMI service, which the
+# modem needs before it will touch secure NV. diag_reader reads the modem's
+# own F3 log over DIAG -- the only way to see what the firmware thinks.
+#
+# mdm_helper_native is deliberately NOT built here: it drives the ESOC
+# request engine through debugfs and /dev/esoc, and kebab has no ESOC driver
+# (the AP2MDM sideband is done with dts gpio-hogs instead).
+build() {
+	$CC $CFLAGS $LDFLAGS -o pm_service_native "$srcdir"/pm_service_native.c
+	$CC $CFLAGS $LDFLAGS -o diag_reader "$srcdir"/diag_reader.c
+}
+
+package() {
+	install -Dm755 "$srcdir"/pm_service_native "$pkgdir"/usr/bin/pm_service_native
+	install -Dm755 "$srcdir"/diag_reader "$pkgdir"/usr/bin/diag_reader
+	install -Dm644 "$srcdir"/pm-service-native.service \
+		"$pkgdir"/usr/lib/systemd/system/pm-service-native.service
+}
+sha512sums="
+461490e2f8df52950ead711e7e5d09440872ef9ebcb7c324ef1f025824a8b964bfb2b7fadcba633e327c75a294ae8eb381eea198937daab7de721d9d96395cce  pm_service_native.c
+68aab4162d32eb9566fc726bd0b39083700e64afda6363e894ca01b4134728b9bdc3a5a34be34fe255e925061ae7d1c352bf8b1ec10dabe60cc6aa5c178677ad  diag_reader.c
+d8ae75246832192544a14c0eb868dfa500b072887caace93d2e64e6e2f0fa82349eeb782bdeed185bfcabdb71cda394af92f732175bfd81fca502587699e68ec  pm-service-native.service
+"

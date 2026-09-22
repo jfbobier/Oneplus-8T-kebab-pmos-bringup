@@ -1,0 +1,29 @@
+# Device-specific/private captures
+private/
+captures/
+efs/
+nv/
+firmware/
+*.qmdl
+*.img
+*.mbn
+*.elf
+*.qdb
+*.log
+
+# Local build/output
+*.apk
+*.tar
+*.tar.gz
+*.zip
+__pycache__/
+*.pyc
+
+# Device/subscriber secrets and captures
+*sim-pin*
+*imei*restore*
+*.qmdl
+*.mbn
+*.img
+*efs*dump*
+*nv*dump*

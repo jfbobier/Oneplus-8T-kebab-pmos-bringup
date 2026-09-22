@@ -1,0 +1,27 @@
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
+@@ -812,6 +812,24 @@
+ 	vdda18-supply = <&vreg_l12a_1p8>;
+ 	vdda33-supply = <&vreg_l2a_3p1>;
+ 	status = "okay";
++
++	/*
++	 * HS PHY tuning lifted from stock OxygenOS, which sets
++	 * qcom,param-override-seq = <0x67 0x6c  0x0b 0x70  0x28 0x74>,
++	 * i.e. HS_PHY_OVERRIDE_X0/X1/X2 = 0x67/0x0b/0x28. Decoded into the
++	 * per-field properties that phy-qcom-snps-femto-v2.c accepts via the
++	 * qcom,usb-snps-hs-7nm-phy match data. Mainline leaves the PHY
++	 * untuned, which is a candidate for the EPROTO control-transfer
++	 * failures seen on USB hubs even under external bus power.
++	 */
++	qcom,hs-disconnect-bp = <2156>;
++	qcom,squelch-detector-bp = <0>;
++	qcom,hs-amplitude-bp = <1780>;
++	qcom,pre-emphasis-duration-bp = <20000>;
++	qcom,pre-emphasis-amplitude-bp = <40000>;
++	qcom,hs-rise-fall-time-bp = <5430>;
++	qcom,hs-crossover-voltage-microvolt = <28000>;
++	qcom,hs-output-impedance-micro-ohms = <0>;
+ };
+ 
+ &usb_2 {

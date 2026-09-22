@@ -1,0 +1,233 @@
+From baf73031a826c27ba0e457a15747a0c7374e95c2 Mon Sep 17 00:00:00 2001
+From: kebab bring-up <local@invalid>
+Date: Fri, 18 Sep 2026 13:13:19 +0200
+Subject: [PATCH] kebab: imx471 -- reproduce the vendor power-up sequence
+ (VANA->VDIG->VIO->MCLK->RESET)
+
+The upstream imx471 driver manages exactly one regulator:
+
+  static const char * const imx471_supply_name[] = { "vana" };
+
+That is correct for the platform it was written for. It is an Intel
+driver (Copyright Intel 2025 / Kate Hsuan, Red Hat 2026) targeting an
+IPU-based x86 machine, where VDIG and VIO are board rails that firmware
+brings up before the OS ever runs. It is not a description of how this
+phone powers its front camera.
+
+On kebab the vendor sequences three rails plus clock and reset. Recovered
+from the stock sensor module descriptor:
+
+  odm/lib64/camera/com.qti.sensormodule.truly_imx471.bin
+
+a QTI Chromatix "Parameter Parser V2.0.0" container. Its descriptor table
+(32-byte name + 5 u64 at stride 0x48 from 0xf0, data base 0x142f0) has two
+120-byte powerSetting arrays, each five 24-byte {seq_type, config_val,
+delay} records, with seq_type per enum msm_camera_power_seq_type in the
+downstream tree (MCLK=0, VANA=1, VDIG=2, VIO=3, RESET=8):
+
+  powerSetting[0] (up)    VANA(1,1) VDIG(1,1) VIO(1,1) MCLK(19200000,1) RESET(1,1)
+  powerSetting[1] (down)  RESET(0,1) MCLK(0,1) VIO(0,1) VDIG(0,1) VANA(0,1)
+
+The MCLK record's config_val is 0x0124f800 = 19200000, which matches
+clock-rates in the vendor devicetree and confirms the field layout.
+
+What we were doing instead: L1P (cam_vdig) and L4P (cam_vio) were marked
+regulator-always-on as a workaround for the driver only claiming "vana",
+so both were up permanently from boot and VANA came afterwards. That
+inverts the vendor's ordering for the first three steps. VANA is
+specified to lead, and Sony parts commonly require the analog rail first
+to avoid latching through internal ESD structures -- a latched die does
+not answer I2C, which is consistent with a clean address-phase NACK from
+a sensor whose EEPROM neighbour (fed from cam_vio) answers normally.
+
+So: claim all three supplies in the driver, enable them individually in
+vendor order 1ms apart rather than via regulator_bulk_enable, then MCLK,
+then release RESET. Power-down walks the array backwards, giving exactly
+the vendor's reverse order. Drop regulator-always-on from L1P and L4P and
+wire them to the sensor node as vdig-supply and vio-supply.
+
+Note this means the front camera now genuinely power-cycles. Until now
+the die had never once seen a cold start under our control: VIO and VDIG
+were applied continuously from boot and only VANA and XCLR ever moved.
+---
+ .../boot/dts/qcom/sm8250-oneplus-kebab.dts    | 19 +++--
+ drivers/media/i2c/imx471.c                    | 84 ++++++++++++-------
+ 2 files changed, 63 insertions(+), 40 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
+index 3b9b78fcb..eba02a274 100644
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
+@@ -1923,12 +1923,9 @@ L1P: ldo1 {
+ 				 * nearest representable step instead. */
+ 				regulator-min-microvolt = <1104000>;
+ 				regulator-max-microvolt = <1104000>;
+-				/* cam_vdig for the front sensor (1.1V, per
+-				 * kebab-19805-camera.dts's cam-sensor@2). imx471.c
+-				 * only regulator_bulk_gets "vana" itself, so keep
+-				 * this fixed rail up rather than plumb a driver
+-				 * change for it. */
+-				regulator-always-on;
++				/* cam_vdig. No longer always-on: imx471.c now owns
++				 * this rail via vdig-supply and sequences it as the
++				 * vendor descriptor requires (VANA before VDIG). */
+ 			};
+ 
+ 			L2P: ldo2 {
+@@ -1947,9 +1944,9 @@ L4P: ldo4 {
+ 				regulator-name = "pm8008_l4";
+ 				regulator-min-microvolt = <1800000>;
+ 				regulator-max-microvolt = <1800000>;
+-				/* cam_vio, shared by every sensor per
+-				 * kebab-19805-camera.dts. Same reasoning as L1P. */
+-				regulator-always-on;
++				/* cam_vio. No longer always-on: imx471.c owns it via
++				 * vio-supply. Nominally shared with the rear sensors,
++				 * none of which have a mainline driver bound today. */
+ 			};
+ 
+ 			L5P: ldo5 {
+@@ -2056,7 +2053,11 @@ camf_imx471: camera@1a {
+ 		compatible = "sony,imx471";
+ 		reg = <0x1a>;
+ 
++		/* Vendor order VANA -> VDIG -> VIO; the driver enables these
++		 * in the order of its own supply table, not this one. */
+ 		vana-supply = <&vreg_cam_front_vana>;
++		vdig-supply = <&L1P>;
++		vio-supply = <&L4P>;
+ 
+ 		clocks = <&camcc CAM_CC_MCLK4_CLK>;
+ 		assigned-clocks = <&camcc CAM_CC_MCLK4_CLK>;
+diff --git a/drivers/media/i2c/imx471.c b/drivers/media/i2c/imx471.c
+index 8cca49580..b960737ca 100644
+--- a/drivers/media/i2c/imx471.c
++++ b/drivers/media/i2c/imx471.c
+@@ -117,8 +117,25 @@
+ 
+ #define to_imx471(_sd) container_of_const(_sd, struct imx471, sd)
+ 
++/*
++ * Vendor power-up order, recovered from the stock sensor module
++ * descriptor odm/lib64/camera/com.qti.sensormodule.truly_imx471.bin
++ * (QTI Chromatix "Parameter Parser V2.0.0", powerSetting[0], five
++ * 24-byte {seq_type, config_val, delay} records):
++ *
++ *   VANA -> VDIG -> VIO -> MCLK(19200000) -> RESET
++ *
++ * powerSetting[1] is the exact reverse for power-down. The MCLK
++ * record's config_val decodes to 0x0124f800 = 19200000, matching
++ * clock-rates in the vendor devicetree, which confirms the layout.
++ *
++ * Order matters here: VANA must lead. This array is enabled in
++ * index order by imx471_power_on().
++ */
+ static const char * const imx471_supply_name[] = {
+ 	"vana",
++	"vdig",
++	"vio",
+ };
+ 
+ struct imx471_mode {
+@@ -520,12 +537,19 @@ static int imx471_power_off(struct device *dev)
+ {
+ 	struct v4l2_subdev *sd = dev_get_drvdata(dev);
+ 	struct imx471 *sensor = to_imx471(sd);
++	unsigned int i = ARRAY_SIZE(imx471_supply_name);
+ 
+-	clk_disable_unprepare(sensor->img_clk);
++	/* Exact reverse of power-on: RESET, MCLK, VIO, VDIG, VANA. */
+ 	gpiod_set_value_cansleep(sensor->reset_gpio, 1);
++	usleep_range(1000, 2000);
+ 
+-	regulator_bulk_disable(ARRAY_SIZE(imx471_supply_name),
+-			       sensor->supplies);
++	clk_disable_unprepare(sensor->img_clk);
++	usleep_range(1000, 2000);
++
++	while (i--) {
++		regulator_disable(sensor->supplies[i].consumer);
++		usleep_range(1000, 2000);
++	}
+ 
+ 	return 0;
+ }
+@@ -534,49 +558,47 @@ static int imx471_power_on(struct device *dev)
+ {
+ 	struct v4l2_subdev *sd = dev_get_drvdata(dev);
+ 	struct imx471 *sensor = to_imx471(sd);
++	unsigned int i;
+ 	int ret;
+ 
+-	ret = regulator_bulk_enable(ARRAY_SIZE(imx471_supply_name),
+-				    sensor->supplies);
+-	if (ret < 0) {
+-		dev_err(dev, "failed to enable regulators: %d\n", ret);
+-		return ret;
++	/*
++	 * Hold the sensor in reset across the whole rail bring-up. The vendor
++	 * power-down sequence leaves RESET asserted, so this is also the state
++	 * the part expects to start from.
++	 */
++	gpiod_set_value_cansleep(sensor->reset_gpio, 1);
++
++	/* VANA -> VDIG -> VIO, 1ms apart, per the vendor descriptor. */
++	for (i = 0; i < ARRAY_SIZE(imx471_supply_name); i++) {
++		ret = regulator_enable(sensor->supplies[i].consumer);
++		if (ret < 0) {
++			dev_err(dev, "failed to enable %s: %d\n",
++				imx471_supply_name[i], ret);
++			goto err_supplies;
++		}
++		usleep_range(1000, 2000);
+ 	}
+ 
+ 	ret = clk_prepare_enable(sensor->img_clk);
+ 	if (ret < 0) {
+-		regulator_bulk_disable(ARRAY_SIZE(imx471_supply_name),
+-				       sensor->supplies);
+ 		dev_err(dev, "failed to enable imaging clock: %d\n", ret);
+-		return ret;
++		goto err_supplies;
+ 	}
++	usleep_range(1000, 2000);
+ 
+-	/* TEMP DIAGNOSTIC (0064, remove once camera works): confirm the
+-	 * mclk is actually ungated and at the expected rate in the exact
+-	 * window before the chip-id read, not just muxed correctly. */
+-	dev_info(dev, "imx471 TEMP DIAG: img_clk rate = %lu Hz after enable\n",
++	dev_info(dev, "imx471: rails up (vana,vdig,vio), img_clk = %lu Hz\n",
+ 		 clk_get_rate(sensor->img_clk));
+ 
+-	/* TEMP DIAGNOSTIC (0069, remove once camera works): reset_gpio is
+-	 * requested GPIOD_OUT_HIGH (asserted) at probe() time, before any
+-	 * regulator is enabled -- so up to now its 'low' period has all
+-	 * happened while the sensor was completely unpowered. Some Sony
+-	 * sensors specifically need to see the reset edge occur while
+-	 * power+clock are already stable, not just 'already low since
+-	 * cold boot, then released'. Force an explicit powered pulse:
+-	 * assert, hold briefly, release. */
+-	gpiod_set_value_cansleep(sensor->reset_gpio, 1);
+-	usleep_range(5000, 10000);
++	/* Release RESET last. */
+ 	gpiod_set_value_cansleep(sensor->reset_gpio, 0);
+-
+-	/* 0070's 3s diagnostic window confirmed nothing answers at any
+-	 * address during this window (184 full-bus scan passes, only the
+-	 * EEPROM at 0x50/0x58 ever acks) -- pointing to a hardware fault,
+-	 * not a timing issue. Back to a sane 50-60ms so opening the camera
+-	 * app doesn't stall for 3s once the hardware is sorted. */
+ 	usleep_range(50000, 60000);
+ 
+ 	return 0;
++
++err_supplies:
++	while (i--)
++		regulator_disable(sensor->supplies[i].consumer);
++	return ret;
+ }
+ 
+ static int imx471_enable_stream(struct v4l2_subdev *sd,
+-- 
+2.55.0
+

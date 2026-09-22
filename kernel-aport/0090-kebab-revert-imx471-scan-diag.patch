@@ -1,0 +1,75 @@
+From e5db13c6f031d098b546a63ce84eea3dff73baa8 Mon Sep 17 00:00:00 2001
+From: kebab bring-up <local@invalid>
+Date: Fri, 18 Sep 2026 15:02:06 +0200
+Subject: [PATCH] kebab: revert the 0084 imx471 powered bus scan
+
+0084 found the sensor at 0x10 and the front module's own EEPROM at
+0x54/0x5c on CCI1 master 1, which is what unblocked the whole effort.
+With the camera working there is no reason to sweep 112 addresses on
+every power-on.
+
+For the record, the map it produced on cci1 master 1 (i2c-24):
+
+  0x10  IMX471 front sensor
+  0x54  front module EEPROM
+  0x5c  front module EEPROM
+
+and on cci1 master 0 (i2c-23), from an earlier userspace scan:
+
+  0x50  GC5035 macro camera EEPROM
+  0x58  GC5035 macro camera EEPROM
+---
+ drivers/media/i2c/imx471.c | 37 -------------------------------------
+ 1 file changed, 37 deletions(-)
+
+diff --git a/drivers/media/i2c/imx471.c b/drivers/media/i2c/imx471.c
+index 55b267e21..b960737ca 100644
+--- a/drivers/media/i2c/imx471.c
++++ b/drivers/media/i2c/imx471.c
+@@ -593,43 +593,6 @@ static int imx471_power_on(struct device *dev)
+ 	gpiod_set_value_cansleep(sensor->reset_gpio, 0);
+ 	usleep_range(50000, 60000);
+ 
+-	/*
+-	 * TEMP DIAGNOSTIC (0084, revert once resolved).
+-	 *
+-	 * Scan this adapter while the part is genuinely powered and out of
+-	 * reset. This is the first time such a scan runs on the bus the vendor
+-	 * actually assigns the front camera to (CCI1 master 1, patch 0083),
+-	 * with correct VANA polarity (0077) and the vendor power sequence
+-	 * (0082). Every earlier scan (0070, 0075, 0079) ran on master 0 --
+-	 * the GC5035 macro camera's bus -- and/or with the sensor unpowered.
+-	 *
+-	 * What matters is 0x54/0x5c. Those are the front module's OWN EEPROM,
+-	 * which shares this module's VIO/VDIG/VANA rails and sits on the same
+-	 * flex. If they answer and 0x1a stays silent, the module is present
+-	 * and powered while its image sensor specifically is not responding.
+-	 * If nothing at all answers, the fault is upstream of the module.
+-	 */
+-	{
+-		struct i2c_client *client = to_i2c_client(dev);
+-		struct i2c_adapter *adap = client->adapter;
+-		int addr, found = 0;
+-
+-		dev_info(dev, "imx471 DIAG(0084): powered scan of %s\n",
+-			 adap->name);
+-		for (addr = 0x08; addr <= 0x77; addr++) {
+-			union i2c_smbus_data data;
+-
+-			if (i2c_smbus_xfer(adap, addr, 0, I2C_SMBUS_READ, 0,
+-					   I2C_SMBUS_BYTE, &data) >= 0) {
+-				dev_info(dev, "imx471 DIAG(0084): 0x%02x ACKED\n",
+-					 addr);
+-				found++;
+-			}
+-		}
+-		dev_info(dev, "imx471 DIAG(0084): scan done, %d device(s)\n",
+-			 found);
+-	}
+-
+ 	return 0;
+ 
+ err_supplies:
+-- 
+2.55.0
+

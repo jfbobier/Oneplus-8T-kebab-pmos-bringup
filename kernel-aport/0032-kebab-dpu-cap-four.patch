@@ -1,0 +1,11 @@
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder.c
+@@ -2708,7 +2708,7 @@
+ }
+ 
+ /* kebab: bound the frame-done timeout retry storm, see below */
+-#define KEBAB_FRAME_DONE_MAX_CONSECUTIVE_TIMEOUTS 20
++#define KEBAB_FRAME_DONE_MAX_CONSECUTIVE_TIMEOUTS 4
+ 
+ static void dpu_encoder_frame_done_timeout(struct timer_list *t)
+ {

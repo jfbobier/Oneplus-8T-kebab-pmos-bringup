@@ -1,0 +1,21 @@
+diff --git a/drivers/media/i2c/imx471.c b/drivers/media/i2c/imx471.c
+index bc00a7bed..907395815 100644
+--- a/drivers/media/i2c/imx471.c
++++ b/drivers/media/i2c/imx471.c
+@@ -557,6 +557,16 @@ static int imx471_power_on(struct device *dev)
+ 	dev_info(dev, "imx471 TEMP DIAG: img_clk rate = %lu Hz after enable\n",
+ 		 clk_get_rate(sensor->img_clk));
+ 
++	/* TEMP DIAGNOSTIC (0069, remove once camera works): reset_gpio is
++	 * requested GPIOD_OUT_HIGH (asserted) at probe() time, before any
++	 * regulator is enabled -- so up to now its 'low' period has all
++	 * happened while the sensor was completely unpowered. Some Sony
++	 * sensors specifically need to see the reset edge occur while
++	 * power+clock are already stable, not just 'already low since
++	 * cold boot, then released'. Force an explicit powered pulse:
++	 * assert, hold briefly, release. */
++	gpiod_set_value_cansleep(sensor->reset_gpio, 1);
++	usleep_range(5000, 10000);
+ 	gpiod_set_value_cansleep(sensor->reset_gpio, 0);
+ 
+ 	/* TEMP DIAGNOSTIC (0064, remove once camera works): bumped from

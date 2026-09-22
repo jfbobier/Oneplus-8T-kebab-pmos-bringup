@@ -1,0 +1,30 @@
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
+@@ -1074,3 +1074,27 @@
+ 		vddpcie1p8-supply = <&vreg_pmu_pcie_1p8>;
+ 	};
+ };
++
++/*
++ * Cleanup.
++ *
++ * pcie1 has no endpoint on this board -- it reports "Device not found" --
++ * but its pinctrl claims GPIO_83, which the NFC controller needs for its
++ * enable line. That collision produces:
++ *
++ *   sm8250-pinctrl f100000.pinctrl: pin GPIO_83 already requested by
++ *       1c08000.pcie; cannot claim for f100000.pinctrl:629
++ *   nxp-nci_i2c 1-0028: NFC: Failed to get EN gpio
++ *   nxp-nci_i2c 1-0028: probe with driver nxp-nci_i2c failed with error -22
++ *
++ * Disabling the unused controller frees the pin and drops the
++ * "Device not found" message too.
++ */
++
++&pcie1 {
++	status = "disabled";
++};
++
++&pcie1_phy {
++	status = "disabled";
++};

@@ -1,0 +1,26 @@
+[Unit]
+Description=SDX55 remote filesystem (tqftpserv, patched for QRTR instance 3)
+# Upstream tqftpserv publishes QRTR instance 1; the PCIe-attached SDX55 looks
+# up instance 3, so nothing ever resolves. This build publishes instance 3 and
+# retries short sends (see the APKBUILD comment).
+#
+# Path mapping (translate.c):
+#   /readonly/firmware/image/...   -> /lib/firmware/postmarketos/...
+#   /readonly/firmware/modem_pr/... -> /lib/firmware/postmarketos/modem_pr/...
+#   /readwrite/...                 -> /var/lib/tqftpserv
+# kebab is A/B, so the modem firmware partition is modem_a, not modem.
+After=systemd-udevd.service
+Wants=systemd-udevd.service
+Conflicts=tqftpserv.service
+
+[Service]
+Type=simple
+ExecStartPre=/bin/sh -c 'mkdir -p /mnt/modemfw /var/lib/tqftpserv'
+ExecStartPre=/bin/sh -c 'mountpoint -q /mnt/modemfw || mount -o ro /dev/disk/by-partlabel/modem_a /mnt/modemfw'
+ExecStartPre=/bin/sh -c '[ -e /lib/firmware/postmarketos/modem_pr ] || ln -s /mnt/modemfw/image/modem_pr /lib/firmware/postmarketos/modem_pr'
+ExecStart=/usr/bin/tqftpserv-sdx55
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

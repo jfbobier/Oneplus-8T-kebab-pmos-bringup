@@ -1,0 +1,48 @@
+From 444ceb7224b2347f0f96ee521b631e37b724ba31 Mon Sep 17 00:00:00 2001
+From: kebab bring-up <local@invalid>
+Date: Thu, 17 Sep 2026 14:33:09 +0200
+Subject: [PATCH] Revert "kebab: imx471 TEMP DIAG (0075) -- full bus scan while
+ powered, with corrected clock"
+
+This reverts commit 66532efc9acd205cde0be8d55f0f13cf9e175e8a.
+---
+ drivers/media/i2c/imx471.c | 23 -----------------------
+ 1 file changed, 23 deletions(-)
+
+diff --git a/drivers/media/i2c/imx471.c b/drivers/media/i2c/imx471.c
+index 4f48f75b6..8cca49580 100644
+--- a/drivers/media/i2c/imx471.c
++++ b/drivers/media/i2c/imx471.c
+@@ -576,29 +576,6 @@ static int imx471_power_on(struct device *dev)
+ 	 * app doesn't stall for 3s once the hardware is sorted. */
+ 	usleep_range(50000, 60000);
+ 
+-	/* TEMP DIAGNOSTIC (0075, remove once camera works): the 0070 scan
+-	 * above ran while the CCI1 clock was still misconfigured at 19.2MHz
+-	 * instead of the 37.5MHz the CCI v2 timing table assumes (fixed in
+-	 * patch 0072) -- so that scan's silence is not trustworthy evidence
+-	 * of a dead bus. Redo it now, fully powered/clocked/reset-released,
+-	 * with the corrected clock rate, and log every address that ACKs. */
+-	{
+-		struct i2c_client *client = to_i2c_client(dev);
+-		struct i2c_adapter *adap = client->adapter;
+-		int addr;
+-
+-		dev_info(dev, "imx471 TEMP DIAG (0075): full bus scan while powered, corrected clock\n");
+-		for (addr = 0x08; addr <= 0x77; addr++) {
+-			union i2c_smbus_data data;
+-			int scan_ret = i2c_smbus_xfer(adap, addr, 0,
+-						      I2C_SMBUS_READ, 0,
+-						      I2C_SMBUS_BYTE, &data);
+-			if (scan_ret >= 0)
+-				dev_info(dev, "imx471 TEMP DIAG (0075): addr 0x%02x ACKED\n", addr);
+-		}
+-		dev_info(dev, "imx471 TEMP DIAG (0075): scan complete\n");
+-	}
+-
+ 	return 0;
+ }
+ 
+-- 
+2.55.0
+

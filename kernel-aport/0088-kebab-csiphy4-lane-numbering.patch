@@ -1,0 +1,107 @@
+From 43ac1cebfdeac0160a77101cb58395adfbd8c377 Mon Sep 17 00:00:00 2001
+From: kebab bring-up <local@invalid>
+Date: Fri, 18 Sep 2026 14:50:52 +0200
+Subject: [PATCH] kebab: fix CSIPHY4 endpoint lane numbering and add mandatory
+ clock-lanes
+
+The camss-side endpoint used the sensor's 1-based CSI-2 lane numbering
+and omitted clock-lanes entirely:
+
+	csiphy4_front_ep: endpoint {
+		data-lanes = <1 2 3 4>;
+		remote-endpoint = <&camf_imx471_ep>;
+	};
+
+Both are wrong for camss. Documentation/devicetree/bindings/media/
+qcom,sm8250-camss.yaml lists clock-lanes AND data-lanes under "required"
+for each port, and the CSIPHY side numbers lanes from 0. The other
+SM8250 board in tree that enables camss, sm8250-xiaomi-elish-common.dtsi,
+writes its ports as:
+
+	csiphy4_ep: endpoint {
+		clock-lanes = <7>;
+		data-lanes = <0 1>;
+		bus-type = <MEDIA_BUS_TYPE_CSI2_DPHY>;
+	};
+
+Consequence of the 1-based numbering, from patch 0087's diagnostic:
+
+  CSIPHY DIAG(0087): id=4 link_freq=200000000 timer_clk=300000000
+                     settle_cnt=24 lane_mask=0x9e num_data=4
+  CSIPHY DIAG(0087):   data lane 0 -> pos 1
+  CSIPHY DIAG(0087):   data lane 1 -> pos 2
+  CSIPHY DIAG(0087):   data lane 2 -> pos 3
+  CSIPHY DIAG(0087):   data lane 3 -> pos 4
+
+csiphy_lanes_enable() builds CTRL5 as BIT(pos * 2) over those positions,
+giving BIT(2) | BIT(4) | BIT(6) | BIT(8) = 0x154 instead of the correct
+BIT(0) | BIT(2) | BIT(4) | BIT(6) = 0x55. Physical lane 0 was therefore
+never enabled while bits for lane slots that do not exist were set. The
+PHY cannot lock on a link whose first data lane is switched off, which
+is why every ioctl succeeded, the media graph linked, VIDIOC_STREAMON
+was accepted, and DQBUF then blocked forever with no error and no CSIPHY
+interrupt.
+
+link_freq and settle_cnt were already correct (200000000 and 24), so
+timing was never the problem -- only the lane mapping.
+
+The sensor endpoint is deliberately left at data-lanes = <1 2 3 4>. That
+side uses the standard 1-based CSI-2 convention, and imx471_check_hwcfg()
+rejects anything other than 4 data lanes.
+
+Also pull in dt-bindings/media/video-interfaces.h for
+MEDIA_BUS_TYPE_CSI2_DPHY.
+---
+ .../boot/dts/qcom/sm8250-oneplus-kebab.dts    | 29 ++++++++++++++++++-
+ 1 file changed, 28 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
+index be285890a..a67df44ad 100644
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
+@@ -1,6 +1,7 @@
+ /dts-v1/;
+ 
+ #include <dt-bindings/gpio/gpio.h>
++#include <dt-bindings/media/video-interfaces.h>
+ #include <dt-bindings/arm/qcom,ids.h>
+ #include <dt-bindings/regulator/qcom,rpmh-regulator.h>
+ #include <dt-bindings/phy/phy.h>
+@@ -2043,7 +2044,33 @@ ports {
+ 		port@4 {
+ 			reg = <4>;
+ 			csiphy4_front_ep: endpoint {
+-				data-lanes = <1 2 3 4>;
++				/*
++				 * CSIPHY-side lane numbering is 0-based and
++				 * clock-lanes is mandatory -- see
++				 * Documentation/devicetree/bindings/media/
++				 * qcom,sm8250-camss.yaml, which lists both
++				 * clock-lanes and data-lanes under "required",
++				 * and sm8250-xiaomi-elish-common.dtsi, the other
++				 * SM8250 board that enables camss.
++				 *
++				 * This endpoint previously carried the sensor-side
++				 * 1-based numbering, data-lanes = <1 2 3 4>, and no
++				 * clock-lanes at all. csiphy_lanes_enable() then
++				 * programmed CTRL5 as BIT(pos * 2) over positions
++				 * 1..4 -- BIT(2,4,6,8) = 0x154 -- instead of
++				 * positions 0..3 -- BIT(0,2,4,6) = 0x55. Physical
++				 * lane 0 was left disabled and nonexistent lane
++				 * slots were enabled, so the PHY never locked.
++				 * Confirmed live by patch 0087's diagnostic:
++				 *   lane_mask=0x9e, data lanes at pos 1,2,3,4
++				 *
++				 * The sensor endpoint keeps <1 2 3 4>: that side is
++				 * the standard 1-based CSI-2 convention and the
++				 * imx471 driver requires exactly 4 data lanes.
++				 */
++				clock-lanes = <7>;
++				data-lanes = <0 1 2 3>;
++				bus-type = <MEDIA_BUS_TYPE_CSI2_DPHY>;
+ 				remote-endpoint = <&camf_imx471_ep>;
+ 			};
+ 		};
+-- 
+2.55.0
+

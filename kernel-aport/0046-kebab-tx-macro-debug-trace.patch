@@ -1,0 +1,46 @@
+diff --git a/sound/soc/codecs/lpass-tx-macro.c b/sound/soc/codecs/lpass-tx-macro.c
+index 0cbf50647..745fba8bc 100644
+--- a/sound/soc/codecs/lpass-tx-macro.c
++++ b/sound/soc/codecs/lpass-tx-macro.c
+@@ -655,17 +655,22 @@ static bool is_amic_enabled(struct snd_soc_component *component,
+ 	adc_mux_reg = CDC_TX_INP_MUX_ADC_MUXn_CFG1(decimator);
+ 
+ 	if (snd_soc_component_read(component, adc_mux_reg) & SWR_MIC) {
+-		if (tx->data->ver > LPASS_VER_9_0_0)
++		if (tx->data->ver > LPASS_VER_9_0_0) {
++			dev_info(component->dev, "kebab-mic-trace: is_amic_enabled dec=%u amic=true (v9.2+ SWR_MIC)\n", decimator);
+ 			return true;
++		}
+ 
+ 		/* else: LPASS <= v9.0.0 */
+ 		adc_reg = CDC_TX_INP_MUX_ADC_MUXn_CFG0(decimator);
+ 		adc_n = snd_soc_component_read_field(component, adc_reg,
+ 					     CDC_TX_MACRO_SWR_MIC_MUX_SEL_MASK);
+-		if (adc_n < TX_ADC_MAX)
++		if (adc_n < TX_ADC_MAX) {
++			dev_info(component->dev, "kebab-mic-trace: is_amic_enabled dec=%u amic=true adc_n=%u\n", decimator, adc_n);
+ 			return true;
++		}
+ 	}
+ 
++	dev_info(component->dev, "kebab-mic-trace: is_amic_enabled dec=%u amic=false\n", decimator);
+ 	return false;
+ }
+ 
+@@ -811,6 +816,8 @@ static int tx_macro_put_dec_enum(struct snd_kcontrol *kcontrol,
+ 	if (val >= e->items)
+ 		return -EINVAL;
+ 
++	dev_info(component->dev, "kebab-mic-trace: put_dec_enum widget=%s val=%u shift=%d ver=%d\n", widget->name, val, widget->shift, tx->data->ver);
++
+ 	switch (e->reg) {
+ 	case CDC_TX_INP_MUX_ADC_MUX0_CFG0:
+ 		mic_sel_reg = CDC_TX0_TX_PATH_CFG0;
+@@ -920,6 +927,7 @@ static int tx_macro_enable_dec(struct snd_soc_dapm_widget *w,
+ 	struct tx_macro *tx = snd_soc_component_get_drvdata(component);
+ 
+ 	decimator = w->shift;
++	dev_info(component->dev, "kebab-mic-trace: enable_dec widget=%s dec=%u event=%d\n", w->name, decimator, event);
+ 	tx_vol_ctl_reg = CDC_TXn_TX_PATH_CTL(decimator);
+ 	hpf_gate_reg = CDC_TXn_TX_PATH_SEC2(decimator);
+ 	dec_cfg_reg = CDC_TXn_TX_PATH_CFG0(decimator);

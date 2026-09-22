@@ -1,0 +1,50 @@
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
+@@ -788,13 +788,25 @@
+ };
+ 
+ &usb_1_dwc3 {
+-	dr_mode = "peripheral";
++	/*
++	 * USB 2.0 OTG. Host role is required for DP altmode (dp_altmode_probe
++	 * rejects anything but TYPEC_HOST with -EPROTO), but USB3 is not: DP rides
++	 * the QMP PHY's DP block, so the HS-only phy list and
++	 * qcom,select-utmi-as-pipe-clk both stay. That keeps dwc3 off
++	 * GCC_USB3_PRIM_PHY_PIPE_CLK, which is what hung the boot when the full
++	 * super-speed switch was attempted.
++	 */
++	dr_mode = "otg";
++	usb-role-switch;
+ 	maximum-speed = "high-speed";
+-	/* Remove USB3 phy */
+ 	phys = <&usb_1_hsphy>;
+ 	phy-names = "usb2-phy";
+ };
+ 
++&usb_1_dwc3_hs_out {
++	remote-endpoint = <&pm8150b_hs_in>;
++};
++
+ &usb_1_hsphy {
+ 	vdda-pll-supply = <&vreg_l5a_0p88>;
+ 	vdda18-supply = <&vreg_l12a_1p8>;
+@@ -1480,12 +1492,13 @@
+ 			#address-cells = <1>;
+ 			#size-cells = <0>;
+ 
+-			/*
+-			 * port@0 (HS data path to usb_1_dwc3_hs_out) is intentionally
+-			 * absent: dwc3 stays peripheral-only for now and registers no
+-			 * usb-role-switch, so leaving the graph edge out keeps TCPM from
+-			 * looking for one.
+-			 */
++			port@0 {
++				reg = <0>;
++
++				pm8150b_hs_in: endpoint {
++					remote-endpoint = <&usb_1_dwc3_hs_out>;
++				};
++			};
+ 
+ 			port@1 {
+ 				reg = <1>;

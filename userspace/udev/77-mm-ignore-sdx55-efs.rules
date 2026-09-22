@@ -1,0 +1,4 @@
+# The EFS channel is the modem 's remote-storage transport, not a control port.
+# ModemManager probes it with AT strings, the modem 's rmts_srv receives them as
+# garbage ("rmts_srv:Received %d bytes" floods its F3 log) and it ERRFATALs.
+SUBSYSTEM=="wwan", KERNEL=="wwan0efs0", ENV{ID_MM_PORT_IGNORE}="1"

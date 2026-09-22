@@ -1,0 +1,86 @@
+From f3cc7b86f877f3319af611aef68fbc0ac131c1e3 Mon Sep 17 00:00:00 2001
+From: kebab bring-up <local@invalid>
+Date: Fri, 18 Sep 2026 11:50:13 +0200
+Subject: [PATCH] kebab: front camera VANA gpio156 is active-high, not
+ active-low
+
+The IMX471 front-camera VANA load switch on gpio156 was declared
+GPIO_ACTIVE_LOW by patch 0060. That is inverted.
+
+Ground truth, from two independent copies of the vendor devicetree for
+this exact board:
+
+  kona-oem-camera-kebab_t0.dtsi:635   cam_sensor_front_avdd_suspend
+  kebab-19805-camera.dts:14032        cam_sensor_front_avdd_suspend
+
+both configure gpio156 as "output-low; bias-pull-down;" in the camera-off
+(suspend) state, and plain "bias-disable" when active. Off is therefore
+low and on is high: the rail is active-high.
+
+With the inverted flag, gpiolib did the exact opposite of what was
+intended. While the regulator was nominally disabled the pin was parked
+high, leaving VANA on; and when imx471_power_on() called
+regulator_bulk_enable() the pin was driven low, cutting VANA for the whole
+duration of the chip-id read at 0x0016. Every probe therefore talked to a
+sensor whose analog supply had just been removed, which is precisely the
+reproducible
+
+  imx471 23-001a: Error reading reg 0x0016: -6
+  imx471 23-001a: error -ENXIO: failed to read chip id
+
+signature. The live state agreed: with the regulator disabled,
+/sys/kernel/debug/gpio showed "gpio156 : out high".
+
+This also retroactively invalidates the two full address-space bus scans
+(0070 and 0075) that were used to argue for a dead sensor. Both ran inside
+imx471's powered window, i.e. inside the window where VANA was actually
+off, so neither could ever have seen the sensor ACK. The module EEPROM
+kept answering at 0x50/0x58 throughout because it is fed from pm8008_l4
+(cam_vio, regulator-always-on), not from VANA -- which is exactly why the
+bus looked electrically alive while the sensor looked dead.
+
+Fix the flag and add the explicit enable-active-high property.
+---
+ .../boot/dts/qcom/sm8250-oneplus-kebab.dts    | 19 ++++++++++++++++++-
+ 1 file changed, 18 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
+index ad2068ad1..107bb1a45 100644
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
+@@ -1971,6 +1971,22 @@ &cci1 {
+  * dedicated GPIO (gpio-req-tbl-label = "CAM_front_VANA", raw pin 0x9c=156)
+  * in addition to the shared vreg_bob rail -- modeled as a fixed regulator
+  * so the imx471 driver's own "vana" regulator_bulk_enable() toggles it.
++ *
++ * Polarity is ACTIVE HIGH. The vendor's own pinctrl for this pin
++ * (kona-oem-camera-kebab_t0.dtsi, cam_sensor_front_avdd_suspend, and the
++ * same node in the extracted kebab-19805-camera.dts) drives gpio156
++ * "output-low; bias-pull-down;" in the *suspend* / camera-off state --
++ * therefore off == low and on == high.
++ *
++ * Patch 0060 previously declared this GPIO_ACTIVE_LOW, which inverted the
++ * rail: gpiolib parked the pin high (VANA on) while the regulator was
++ * nominally disabled, and drove it low (VANA off) exactly when
++ * imx471_power_on() enabled the supply -- i.e. the sensor's analog rail was
++ * cut for the duration of every chip-id read. That is the -ENXIO NACK, and
++ * it also invalidates both earlier full-bus scans (0070, 0075), which ran
++ * inside that same unpowered window. The module EEPROM at 0x50/0x58 kept
++ * answering throughout because it is fed from the always-on pm8008_l4 VIO
++ * rail, not from VANA.
+  */
+ / {
+ 	vreg_cam_front_vana: regulator-cam-front-vana {
+@@ -1979,7 +1995,8 @@ vreg_cam_front_vana: regulator-cam-front-vana {
+ 		regulator-min-microvolt = <2856000>;
+ 		regulator-max-microvolt = <2856000>;
+ 		vin-supply = <&vreg_bob>;
+-		gpio = <&tlmm 156 GPIO_ACTIVE_LOW>;
++		gpio = <&tlmm 156 GPIO_ACTIVE_HIGH>;
++		enable-active-high;
+ 	};
+ };
+ 
+-- 
+2.55.0
+

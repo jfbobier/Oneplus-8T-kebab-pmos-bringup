@@ -1,0 +1,23 @@
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
+@@ -1630,6 +1630,20 @@
+ 			regulator-name = "otg-vbus";
+ 			regulator-min-microvolt = <5000000>;
+ 			regulator-max-microvolt = <5000000>;
++
++			/*
++			 * The MP2762A boost needs time to ramp 0 -> 5 V, but
++			 * .enable returns as soon as REG08 bit5 is written. TCPM
++			 * then samples vSafe5V immediately and logs
++			 * "vbus vsafe5v fail" - once on every single source
++			 * attach (measured at t=2010.11, 2026.75 and 2098.02 in
++			 * one session; the device still came up ~6 s later via
++			 * TCPM's own retry). Making the regulator core wait here
++			 * turns that retry into a first-try success.
++			 * 20 ms is generous for a boost this size and far inside
++			 * the Type-C tSrcTurnOn budget (275 ms).
++			 */
++			regulator-enable-ramp-delay = <300000>;
+ 		};
+ 	};
+ };

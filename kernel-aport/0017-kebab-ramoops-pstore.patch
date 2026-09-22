@@ -1,0 +1,25 @@
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
+@@ -157,14 +157,14 @@
+ 			no-map;
+ 		};
+ 
+-		// ramoops@b0000000 {
+-		// 	compatible = "ramoops";
+-		// 	reg = <0x00 0xb0000000 0x00 0x400000>;
+-		// 	record-size = <0x40000>;
+-		// 	console-size = <0x40000>;
+-		// 	ecc-size = <0x00>;
+-		// 	no-map;
+-		// };
++		ramoops@b0000000 {
++			compatible = "ramoops";
++			reg = <0x00 0xb0000000 0x00 0x400000>;
++			record-size = <0x40000>;
++			console-size = <0x200000>;
++			ecc-size = <0x00>;
++			no-map;
++		};
+ 	};
+ 
+ 	vph_pwr: vph-pwr-regulator {

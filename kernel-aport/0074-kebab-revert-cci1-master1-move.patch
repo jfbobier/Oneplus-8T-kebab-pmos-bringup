@@ -1,0 +1,27 @@
+From beb214156182ea2877ba15615f0e5decb0d3f1b6 Mon Sep 17 00:00:00 2001
+From: kebab bring-up <local@invalid>
+Date: Thu, 17 Sep 2026 13:42:16 +0200
+Subject: [PATCH] Revert "kebab: move front camera (IMX471) from cci1_i2c0 to
+ cci1_i2c1"
+
+This reverts commit 885eaff443426a3d78e18b32b6084af983023cb5.
+---
+ arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
+index c79c705d0..ad2068ad1 100644
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
+@@ -1995,7 +1995,7 @@ csiphy4_front_ep: endpoint {
+ 	};
+ };
+ 
+-&cci1_i2c1 {
++&cci1_i2c0 {
+ 	camf_imx471: camera@1a {
+ 		compatible = "sony,imx471";
+ 		reg = <0x1a>;
+-- 
+2.55.0
+

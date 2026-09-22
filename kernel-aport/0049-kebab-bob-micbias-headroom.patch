@@ -1,0 +1,25 @@
+diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
+index 736dcd677..713bb3d7a 100644
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
+@@ -419,7 +419,19 @@ regulators-2 {
+ 
+ 		vreg_bob: bob {
+ 			regulator-name = "vreg_bob";
+-			regulator-min-microvolt = <3008000>;
++			/*
++			 * BOB feeds the WCD9385 vdd-mic-bias input. Mainline's
++			 * wcd938x driver only bulk-enables its supplies and never
++			 * requests a voltage, so BOB parks at this minimum. 3008000
++			 * (RPMh rounds it to 3032000) is below what the vendor
++			 * configuration specifies for the mic-bias rail: OnePlus's
++			 * kebab-oem.dtsi sets qcom,cdc-vdd-mic-bias-voltage =
++			 * <3300000 3600000> and Qualcomm's kona-audio-overlay.dtsi
++			 * uses <3296000 3296000>. Raise the floor to 3.3V so the
++			 * codec's micbias generator gets the headroom the vendor
++			 * design assumes.
++			 */
++			regulator-min-microvolt = <3300000>;
+ 			regulator-max-microvolt = <4000000>;
+ 			regulator-initial-mode = <RPMH_REGULATOR_MODE_AUTO>;
+ 		};

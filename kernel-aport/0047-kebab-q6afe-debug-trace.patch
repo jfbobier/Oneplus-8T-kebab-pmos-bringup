@@ -1,0 +1,29 @@
+diff --git a/sound/soc/qcom/qdsp6/q6afe-dai.c b/sound/soc/qcom/qdsp6/q6afe-dai.c
+index a0d21034a..9649e0f46 100644
+--- a/sound/soc/qcom/qdsp6/q6afe-dai.c
++++ b/sound/soc/qcom/qdsp6/q6afe-dai.c
+@@ -365,6 +365,9 @@ static int q6dma_hw_params(struct snd_pcm_substream *substream,
+ 	cfg->sample_rate = params_rate(params);
+ 	cfg->num_channels = params_channels(params);
+ 
++	pr_info("kebab-mic-trace: q6dma_hw_params dai_id=%d bit_width=%u sample_rate=%u num_channels=%u\n",
++		dai->id, cfg->bit_width, cfg->sample_rate, cfg->num_channels);
++
+ 	return 0;
+ }
+ static void q6afe_dai_shutdown(struct snd_pcm_substream *substream,
+diff --git a/sound/soc/qcom/qdsp6/q6afe.c b/sound/soc/qcom/qdsp6/q6afe.c
+index 40237267f..9d55c04ba 100644
+--- a/sound/soc/qcom/qdsp6/q6afe.c
++++ b/sound/soc/qcom/qdsp6/q6afe.c
+@@ -1655,6 +1655,10 @@ void q6afe_cdc_dma_port_prepare(struct q6afe_port *port,
+ 	dma_cfg->num_channels = cfg->num_channels;
+ 	if (!cfg->active_channels_mask)
+ 		dma_cfg->active_channels_mask = (1 << cfg->num_channels) - 1;
++
++	pr_info("kebab-mic-trace: q6afe_cdc_dma_port_prepare port_id=%d rate=%u bit_width=%u data_format=%u num_ch=%u ch_mask=0x%x\n",
++		port->id, dma_cfg->sample_rate, dma_cfg->bit_width, dma_cfg->data_format,
++		dma_cfg->num_channels, dma_cfg->active_channels_mask);
+ }
+ EXPORT_SYMBOL_GPL(q6afe_cdc_dma_port_prepare);
+ /**

@@ -1,0 +1,94 @@
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
+@@ -521,10 +521,6 @@
+ 	status = "okay";
+ };
+ 
+-&dispcc {
+-       status = "disabled";
+-};
+-
+ &gmu {
+ 	status = "okay";
+ };
+@@ -830,3 +826,80 @@
+ 	firmware-name = "postmarketos/venus.mbn";
+ 	status = "okay";
+ };
++
++/*
++ * Display: DSI0 + Samsung AMB655X panel.
++ *
++ * The &dispcc disable that used to live in this file was removed. dispcc is
++ * the display clock controller; with it disabled, mdss, the DPU, the DSI
++ * controller and the DSI PHY can never resolve their clocks, so none of them
++ * probe regardless of their own status properties.
++ */
++
++&mdss {
++	status = "okay";
++};
++
++&mdss_dsi0 {
++	vdda-supply = <&vreg_l9a_1p2>;
++	status = "okay";
++
++	display_panel: panel@0 {
++		compatible = "samsung,amb655x";
++		reg = <0>;
++
++		vddio-supply = <&vreg_l14a_1p8>;
++		reset-gpios = <&tlmm 75 GPIO_ACTIVE_LOW>;
++
++		pinctrl-names = "default";
++		pinctrl-0 = <&panel_reset_pins &panel_vsync_pins &panel_vout_pins>;
++
++		status = "okay";
++
++		ports {
++			#address-cells = <1>;
++			#size-cells = <0>;
++
++			port@0 {
++				reg = <0>;
++
++				panel_in_0: endpoint {
++					remote-endpoint = <&mdss_dsi0_out>;
++				};
++			};
++		};
++	};
++};
++
++&mdss_dsi0_out {
++	data-lanes = <0 1 2 3>;
++	remote-endpoint = <&panel_in_0>;
++};
++
++&mdss_dsi0_phy {
++	vdds-supply = <&vreg_l5a_0p88>;
++	status = "okay";
++};
++
++&tlmm {
++	panel_reset_pins: panel-reset-state {
++		pins = "gpio75";
++		function = "gpio";
++		drive-strength = <8>;
++		bias-disable;
++	};
++
++	panel_vsync_pins: panel-vsync-state {
++		pins = "gpio66";
++		function = "mdp_vsync";
++		drive-strength = <16>;
++		bias-pull-down;
++	};
++
++	panel_vout_pins: panel-vout-state {
++		pins = "gpio24";
++		function = "gpio";
++		drive-strength = <16>;
++		output-high;
++	};
++};

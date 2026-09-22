@@ -1,0 +1,18 @@
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
+@@ -1462,6 +1462,15 @@
+ 
+ 	vdd-pdphy-supply = <&vreg_l2a_3p1>;
+ 
++	/*
++	 * Required for DP: once dwc3 is OTG the port takes the host/DFP role, and a
++	 * DFP has to source VBUS itself. Without this the driver falls back to a
++	 * dummy regulator ("supply vdd-vbus not found"), no VBUS is ever applied,
++	 * so a bus-powered USB-C adapter never powers up, never answers on CC, and
++	 * no partner is detected at all - no PD, no altmode, no HPD.
++	 */
++	vdd-vbus-supply = <&pm8150b_vbus>;
++
+ 	connector {
+ 		compatible = "usb-c-connector";
+ 

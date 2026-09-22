@@ -1,0 +1,252 @@
+# Reference: <https://postmarketos.org/vendorkernel>
+# Kernel config based on: arch/arm64/configs/defconfig
+# Co-Maintainer: bluebunny <bluebunny@postmarketos.org>
+maintainer="Jianhua Lu <lujianhua000@gmail.com>"
+_flavor="postmarketos-qcom-sm8250"
+pkgname=linux-$_flavor
+pkgver=7.2.0
+pkgrel=18
+pkgdesc="Mainline kernel fork for SM8250"
+arch="aarch64"
+_carch="arm64"
+url="https://gitlab.postmarketos.org/soc/qualcomm-sm8250/linux"
+license="GPL-2.0-only"
+options="!strip !check !tracedeps
+	pmb:cross-native
+	pmb:kconfigcheck-nftables
+	pmb:kconfigcheck-community
+	pmb:kconfigcheck-uefi
+"
+makedepends="
+	bash
+	bison
+	clang
+	elfutils-dev
+	findutils
+	flex
+	linux-headers
+	lld
+	llvm
+	openssl-dev
+	pahole
+	perl
+	postmarketos-installkernel
+	python3
+"
+
+# Source
+_tag="sm8250-$pkgver"
+_config="config-$_flavor.$arch"
+source="
+	$pkgname-$_tag.tar.gz::https://gitlab.postmarketos.org/soc/qualcomm-sm8250/linux/-/archive/$_tag/linux-$_tag.tar.gz
+	$_config
+	0001-kebab-enable-dsi-and-amb655x-panel.patch
+	0002-drm-panel-add-samsung-amb655x.patch
+	0003-kebab-touchscreen-s3908.patch
+	0004-input-add-synaptics-tcm-oncell.patch
+	0005-kebab-qca6390-wifi-bt.patch
+	0007-kebab-disable-unused-pcie1.patch
+	0008-kebab-drop-absent-hardware.patch
+	0009-kebab-wcd9385-audio.patch
+	0010-kebab-q6-dai-nodes.patch
+	0012-arm64-dts-qcom-oneplus-kebab-use-gic-mbi-for-pcie2.patch
+	0014-kebab-qca6390-local-bd-address.patch
+	0017-kebab-ramoops-pstore.patch
+	0018-kebab-displayport-typec-and-dp.patch
+	0019-kebab-displayport-usb2-host-role.patch
+	0020-kebab-typec-vbus-supply.patch
+	0021-kebab-displayport-four-lanes.patch
+	0022-mhi-sdx55-fusion-sahara.patch
+	0023-mhi-sahara-kebab-image-ids.patch
+	0024-kebab-esoc-ap2mdm-gpio-hogs.patch
+	0027-kebab-dpu-frame-done-timeout-bailout.patch
+	0028-kebab-dp-link-bandwidth-margin.patch
+	0029-kebab-dp-mode-valid-wide-bus.patch
+	0026-kebab-mp2762-otg-regulator.patch
+	0034-kebab-mp2762-drop-bad-pinctrl.patch
+	0030-kebab-usb3-superspeed.patch
+	0031-kebab-ramoops-ecc.patch
+	0032-kebab-dpu-cap-four.patch
+	0033-kebab-mp2762-as-vbus-supply.patch
+	0036-kebab-source-pdo-1a5.patch
+	0037-kebab-quiet-handover-irq.patch
+	0038-kebab-dp-altmode-defer.patch
+	0039-kebab-vbus-poll-timeout.patch
+	0041-kebab-tfa9874-amp-nodes.patch
+	0042-kebab-tertiary-mi2s-audio.patch
+	0043-kebab-tfa2-codec-driver.patch
+	0044-kebab-tfa9872-alt-driver.patch
+	0045-kebab-tert-mi2s-pinctrl.patch
+	0046-kebab-tx-macro-debug-trace.patch
+	0047-kebab-q6afe-debug-trace.patch
+	0048-kebab-wcd938x-debug-trace.patch
+	0049-kebab-bob-micbias-headroom.patch
+	0051-kebab-wcd938x-amic-hpf-init.patch
+	0052-kebab-lpass-dmic-pins.patch
+	0053-kebab-va-dmic-capture.patch
+	0054-kebab-dmic-clock-2p4mhz.patch
+	0055-kebab-dmic23-pins.patch
+	0056-kebab-pm8008-camera-pmic.patch
+	0057-kebab-camss-camera-core.patch
+	0058-media-i2c-imx471-backport.patch
+	0059-kebab-front-camera-imx471-dt.patch
+	0060-kebab-front-vana-active-low.patch
+	0061-kebab-front-reset-active-high.patch
+	0062-kebab-pm8008-chip-enable-gpio93.patch
+	0063-kebab-front-reset-revert-active-low.patch
+	0064-kebab-imx471-temp-settle-clk-diag.patch
+	0066-kebab-vdig-1p1v-exact.patch
+	0068-kebab-revert-vdig-1p1v.patch
+	0069-kebab-imx471-powered-reset-pulse.patch
+	0070-kebab-imx471-3s-window-for-scan.patch
+	0071-kebab-revert-3s-window.patch
+	0072-kebab-cci1-pin-clock-rate-37500000.patch
+	0073-kebab-front-camera-move-to-cci1-master1.patch
+	0074-kebab-revert-cci1-master1-move.patch
+	0075-kebab-imx471-temp-full-bus-scan-while-powered.patch
+	0076-kebab-revert-imx471-temp-full-bus-scan.patch
+	0077-kebab-front-vana-active-high.patch
+	0078-kebab-cci1-i2c0-400khz.patch
+	0079-kebab-imx471-temp-rescan-vana-fixed-400khz.patch
+	0080-kebab-vdig-1p104v-nearest-step.patch
+	0081-kebab-revert-imx471-temp-rescan.patch
+	0082-kebab-imx471-vendor-power-sequence.patch
+	0083-kebab-front-camera-to-cci1-master1.patch
+	0084-kebab-imx471-temp-scan-master1.patch
+	0085-kebab-front-imx471-address-0x10.patch
+	0086-kebab-camss-csiphy-vdda-supplies.patch
+	0087-kebab-temp-diag-csiphy-settle.patch
+	0088-kebab-csiphy4-lane-numbering.patch
+	0089-kebab-revert-csiphy-diag.patch
+	0090-kebab-revert-imx471-scan-diag.patch
+	0091-kebab-sdx55-fusion-no-m3.patch
+	0092-kebab-mhi-bind-efs-channel.patch
+"
+builddir="$srcdir/linux-$_tag"
+
+prepare() {
+	default_prepare
+	cp "$srcdir/config-$_flavor.$arch" .config
+}
+
+build() {
+	unset LDFLAGS
+	make ARCH="$_carch" LLVM=1 \
+		KBUILD_BUILD_VERSION="$((pkgrel + 1 ))-$_flavor"
+}
+
+package() {
+	mkdir -p "$pkgdir"/boot
+
+	if [ -e "$builddir/arch/$_carch/boot/vmlinuz.efi" ]; then
+		# ZBOOT EFI decompressor for EFI booting
+		install -Dm644 "$builddir/arch/$_carch/boot/vmlinuz.efi" \
+			"$pkgdir/boot/linux.efi"
+
+		# Old GZIP'd kernel image for boot.img compatibility
+		install -Dm644 "$builddir/arch/$_carch/boot/vmlinuz" \
+			"$pkgdir/boot/vmlinuz"
+	else
+		echo "WARNING: CONFIG_ZBOOT not enabled!"
+		install -Dm644 "$builddir/arch/$_carch/boot/Image.gz" \
+			"$pkgdir/boot/vmlinuz"
+	fi
+
+	make modules_install dtbs_install \
+		ARCH="$_carch" \
+		LLVM=1 \
+		INSTALL_PATH="$pkgdir"/boot/ \
+		INSTALL_MOD_PATH="$pkgdir"/usr \
+		INSTALL_MOD_STRIP=1 \
+		INSTALL_DTBS_PATH="$pkgdir/boot/dtbs"
+	rm -f "$pkgdir"/usr/lib/modules/*/build "$pkgdir"/usr/lib/modules/*/source
+
+	install -D "$builddir"/include/config/kernel.release \
+		"$pkgdir"/usr/share/kernel/$_flavor/kernel.release
+}
+
+sha512sums="
+26d48ebd04c43e993bd00f9c055d40daf87b4919332c974e3c0db236135b522415e3dcf4b512e4028cc42da63fe4639991c3870bcb977967846db590a0b950b7  linux-postmarketos-qcom-sm8250-sm8250-7.2.0.tar.gz
+54ddadb67debc7f34a00d1464280bfd6d65897627346f7af862fa6ba7c52f1ddfe00228397a257567703efc72debbdfba2c16239807ecd5a11304b3883115b52  config-postmarketos-qcom-sm8250.aarch64
+76c1b880afe00945369f2d46f45a0bcba7d13ef5bf4be48ad2b939262f8d6b306752c6fa78e87eee12dfd18f7ed8de37fdba9af4606c0c6f6da2ed8b46be4ed2  0001-kebab-enable-dsi-and-amb655x-panel.patch
+1998c724f1d268a83e879a00e8b64254935d501f5dd64b1f40c7030192809de5b8f2be02101cb1c3d1dc7a7f232825349c1aed323df2cec5ba993d8eb40a20a2  0002-drm-panel-add-samsung-amb655x.patch
+36bf1e0dd06a69ca310223c8e04a6a7deae537ddab9b42045cccbfa49b03f329b29fe1b2d6b54327f78373cb53d213e85a111c1a6a9fb1f4d1d6d17b4c7c941a  0003-kebab-touchscreen-s3908.patch
+06192fe27df69ab163da8a29a62550eaf1f068fe9af67ea7ef61f1d87a8a2f12a8a1f013f124f3bcf8512c3ba53a76c3f284e2b8d7a6cc597847ddc964c2c1e0  0004-input-add-synaptics-tcm-oncell.patch
+ceb696cfbab7fc1a5cef0d7f5f761a2fe88fde9588affb5e8f73fcce1c3edcbbb4a77a4c58b04f4c445223d04456fd03b22eba1826c390deb0f61f0fad606f70  0005-kebab-qca6390-wifi-bt.patch
+4e00561dfff215a20bea30815f8edca44d05fff4d5f7f4e080a21c84151d159b6337314c7fe6709c0ae382f9ab9231feeb28d46807505d7dd5b55ab1d8766bf3  0007-kebab-disable-unused-pcie1.patch
+d7833b6498d3394bb76013390d241d5b8cd400ce4925a9028f1a2f1db9982e395965f83d4b3d0bbc6a383cee1647ef33c2c1311889101992e8b07fe503b1e1d3  0008-kebab-drop-absent-hardware.patch
+4912aed8cfba8c809742aff2a41e2618647498cacbd6ae32105e05545558ea98a3e9e92572e8cf41397565d21b224bb0c5b18e8be2e5cb6a1207a2bbd8bc211f  0009-kebab-wcd9385-audio.patch
+58130a045035cc5a7ae583e493901c15ee8b9189fd1c23425269f40cce58e8748532dd9c059e341e87a2e7a010e53290c0965b8b1f45f9ed75a6afe431ca2ade  0010-kebab-q6-dai-nodes.patch
+7774c9bd5d25ee66fbf59e08df3c962280746281084a257945bd17b64d5e872fa9756aa2820542a726ee92034a7dd67c33ee9d10a396a882b8cc949c648e1c58  0012-arm64-dts-qcom-oneplus-kebab-use-gic-mbi-for-pcie2.patch
+e7a64d92426dae50e6e73348eb761fa96f4e1e859038a5f499ed9c5aff5d80f8a6cca37f0e16a18d638456e2378a00a5483b79c38687391259be77da536d80e6  0014-kebab-qca6390-local-bd-address.patch
+784065f2e67bbbb3254268265a239ce07f85533d0d9dc373547185ea46b0c4e83bccd2b6253dace9b1c2c5f9e08f28305202da3845291d2631331c62cd6a2857  0017-kebab-ramoops-pstore.patch
+daa4d5f30994672a5ffb7674c2e41b7aee6cb5355eded6b1e1f23b87070a1c5b2109c160142be3d68d0fb443f6b111a3c9b80ec27b3141935628d0399422c44c  0018-kebab-displayport-typec-and-dp.patch
+7a46dc93a581e3b610796f08879df35fb0197e3ba42f50e4d404deaf22f80c897497e0985d41758070a58d5774e3c7e0f694086cbad38df110332d53e2f4154c  0019-kebab-displayport-usb2-host-role.patch
+1bd4e2bec118884f8b1563bd42b409b0c90980704d5aed4ace5c0cdb71a3cc843f9b7342fa0a9efc0e3f65463ef958f291935728b1e9c3be17b8b60d323525a0  0020-kebab-typec-vbus-supply.patch
+5843128f9d61e9325ed9818a34caea24723d2588fa30e5751e76d11497c59f33e88593d6d6d82f75ba307d0b7b1deca778342e4edec683c17c359c3cc7649a54  0021-kebab-displayport-four-lanes.patch
+17c6832d4c8dd23259e915dbe6e03ac133d4d1b59eb5318df6f82e827b67f4b7d560e5370d2c428c1f3d433bc20b37509b9d11606c3204b4d32cccf4adb867a9  0022-mhi-sdx55-fusion-sahara.patch
+e8b9540a14345acb9768eafc1b05c72dcedfcc2ebd788f3a1761e05ee1f37db18e4619ea5be77f18b4a8931737d176f2936116d3874df84951b4f950685540a3  0023-mhi-sahara-kebab-image-ids.patch
+30d22141d22a962bb7bd49245d3c919897667341ab5d9f4c4a345087c28a4d73de940b1969f833273ba04e8264db5b794c5690af342e6f87e5284b9dee0fa5ac  0024-kebab-esoc-ap2mdm-gpio-hogs.patch
+82cc8d9eb3e01b5ef994c7f5bae4003ade36228e6ffd7e02f5f22f0919c16617fc8db7ae085f2a701c53303ed2c20c6f94914f22498741005cc24916615af921  0027-kebab-dpu-frame-done-timeout-bailout.patch
+a05d9d74cf862d63253f239bc39ac45304b5ecc7d71cc22f48476c7535e3a7eceae5352be36249de1e65e718d434c493f340a3a9f6d7d51af79179b6957e095a  0028-kebab-dp-link-bandwidth-margin.patch
+20e953eb4fa11c176e9630e34422877248980a4117d0daf1caab7526f0a5a19204bcbfd5f1c3f21f084b2d061851c9060c232931a6515946d434fff47fb2d2f5  0029-kebab-dp-mode-valid-wide-bus.patch
+f88f924696c1183133d3449f475905d564962a4f162c6a27b522bf0e4feb55cd6b9d6ef844bb1243808d4a2ba1a61a3b4272a0b88fab792a3c9a3b749ad367bb  0026-kebab-mp2762-otg-regulator.patch
+57dd818578688be16793dda5fc41d62827d1c7bc538602d6cd251eaec986b011847394e3f764ebc2109d16c1c1749dcc2168f25e1e29114fad120c139e7a07c3  0034-kebab-mp2762-drop-bad-pinctrl.patch
+eb620d142cdf7360e88da93fe9ef44e38eab1c44af50fa43da08ad59d2616d231f24f8c08c4514d7614ab42bb5524913b4d671970ef265e67dcef9fd8fee6aad  0030-kebab-usb3-superspeed.patch
+41146c1c76456629a285785be57a581d231e2855559bc5cd3b82645a8e8c1457eca56aa50e71d0d702d302a14eccd91d527b8205f00274510af0a340c4c96d82  0031-kebab-ramoops-ecc.patch
+34e435dd5cd635ffe65561287d944186dc966989b13d21127c25db64fde0a86ad0f4677babcb756e0f31c42417157b8d8ca94474ad33dce264933b96c89f4c8c  0032-kebab-dpu-cap-four.patch
+22b4e660a671f5c6d645acc6cfa14fd7e64e7cb16e8860d6b152106651a0f10acf93b2b627c2cbb8e642f2177db373b21dc56b1517cf2e56a0b6d9c67d89bf28  0033-kebab-mp2762-as-vbus-supply.patch
+96e0386438643edb9ae9ca51ee9d5a818a21727335647c1a5fc5d6ee27b31bc597d9096b6ba297ce43feea24683a645082c031b47050bad8fa3733a088fbe9d9  0036-kebab-source-pdo-1a5.patch
+0c93b40966f966e50fd2385791aa90832ef2573f29390fdfa8070b6ae902188edfbc678ff0e5a507fcaae55266155c63bf652f78daa35098888abc779fc0b126  0037-kebab-quiet-handover-irq.patch
+4fd0098f4a094aa21d70083b0fbafca3220d9ec2f9b0d3768e701e2d5f744c2751f9e0a6a053793e72e5324b27c665b8381e6278243ff75cb1466a395a1000ae  0038-kebab-dp-altmode-defer.patch
+fd520eccc3aa2fd62dded76cd648a2100df67271b387f560269e04019e162ad83d837410cbf84f3ea36bb0feb18d2d6d5a9fd1b35fea2b93112b53e7ad9aa0b1  0039-kebab-vbus-poll-timeout.patch
+6a07f946176c09fd5593259aa4cf6511580a6ab0d678a38f326b225eddc006e204e9dba4f7fb44361a46c67a377f15c5c3bb543daffea6297f3cd76ead320892  0041-kebab-tfa9874-amp-nodes.patch
+2b6f675fb4281c4b59931a39328266b794808d8f9919e60d05be2abf08cdc7b5f77c7a48d5c47c10b31084646eb8417c2830fe0e77e9a58e60c5865d4235d27f  0042-kebab-tertiary-mi2s-audio.patch
+65b39798414f6e344cc23976f09a38c071be6552c58155ca543e86017fda6f5c961ba42038eeca52dbcfb10803cb2cc61efee1070835a1445322520c4bae4395  0043-kebab-tfa2-codec-driver.patch
+3abc1793b625322032717e87c3955ad4d23f9f7564fd42643f6d23476ba7d46b47fdbb0f7abb3bfea9cbf10853bba22b5ed3398bb50e5609bc016d670b4d1436  0044-kebab-tfa9872-alt-driver.patch
+583858272e8a554b42f8aa7af7e86cb4efa6099dc67e989f0d1451a2bfa3125c5422ccbd98bcb587d039b210e32a5116dcb786c37575f66a3ba92b7c05646a9e  0045-kebab-tert-mi2s-pinctrl.patch
+f3d721507c7d27120cba5efe1d480cd74b9267a69a808a95eae89a5b35df609b481dcf39bbc5d95f36a2f90d8d93ead92315532697adfecdb6c869823ad4083a  0046-kebab-tx-macro-debug-trace.patch
+a4fe46cf9ec25b12ae5887e2166ef95dbdb5e8ba62fe2e075f042bf6123e507c87f493e209241878e3a0dfcbf8c29696f860eb94bd72e6c04a2626b7516c5f43  0047-kebab-q6afe-debug-trace.patch
+0ba7c8f3b6861bf659f3f4829ebdd3365f8c68c2f75dcf4ddd9c86294678f092d7325460918647b857dd3bf82aefd59b7ccb97f6b808704c02ae092bdaf11094  0048-kebab-wcd938x-debug-trace.patch
+b7985d599e1f8944ec8007cc9842586f15b962295c57032720c1cbeb087a39afe681b71a34436e8ab08a0cad5dc8cb30bedad62f38167f66e1d7a4f785ccaad0  0049-kebab-bob-micbias-headroom.patch
+24efd2a7b68ad547d0bc3380f4b6dfe29b39cca88c8b5e880419b5d74a1019d87e564ef5cc6bb84573d74a7ddbbc0d01b9a4466584914e266389a04e3775f040  0051-kebab-wcd938x-amic-hpf-init.patch
+b23c24291872567532fbb758925289b2b9b780e21f0703e0a742e050bc802f613b67b42207c7ffb903dde3f70713f833da43a152009a78d8fd6ebc23e271996e  0052-kebab-lpass-dmic-pins.patch
+dfc1acb2f13be79cfc84d8985070602995437c4c05699d7da00ce4a4d37f70958b8694e85721ddbfff32ae48afe024aa5ea0e3e7ccdf162b24d47dbae305fb6d  0053-kebab-va-dmic-capture.patch
+37cfbf299dea19b646532ad3b249fc7f580b47a5990e66086b0c85d9ed373fbec9737aab23834461a6f4bb3f73f317dee4f33092fb3f55f69d61e02beb26a6f8  0054-kebab-dmic-clock-2p4mhz.patch
+5fd35340426e73ea4f5f77d57a10a8d077907e8997220971b2275dcadce608850ae3ba3d4a394b9ef21a422922d6bf5e2a25387c5038196276a6292c90fefa59  0055-kebab-dmic23-pins.patch
+289eb4b79fbabbab263cc2347f26beb2e26e3868bea6812eb968928f53d4a2790d24beec7c793e72279cf9b91f957dd3616d8b6b63b08988e60cca8392b7ba1f  0056-kebab-pm8008-camera-pmic.patch
+ee5c1b9e3cf4fe88cc256d483ecf769d536c448c0313716faa5a3efe6eb7025026838f3d697496808e094681b2de2f5aae5cac1c94d7c71062ed7da843a7029c  0057-kebab-camss-camera-core.patch
+1b7bc7dcefc6939d78806f07ebd977e6805e4dccba6b8b6430093c19fd91168de0139e6f6732f719fe1e00f032585c961a5361033dedd73c8c830b9a5d502a73  0058-media-i2c-imx471-backport.patch
+47603fab61ee619e98a954f2db94cc178258b70f13a7dd5d82f30d38dd807a179f5958e97d0d1ac2b3c5f6b1d083ac8072ee9fc5d44f1e161d061d85b86913a7  0059-kebab-front-camera-imx471-dt.patch
+0f6de13e2e3e885c5a8f7bb2abcba3b7eab31ecc95baa5f310c013f435ec3a7b815b0368e01918f161071340272b959756b32d80cf766641ff3b5426710b2337  0060-kebab-front-vana-active-low.patch
+7572e21ead7b674990960e6c67491ec845ed3cf2e1854618beae188cbb1478f42bace766ea31e7f368e963cefbd7133efc58ba6d53a99ce0418ff17d8e386945  0061-kebab-front-reset-active-high.patch
+4ca8d3052ffc5558a438c146c5fe57f94cafe7ad99779dc9a0427485186eefe8c9e43ecd0408217388c5c29e6337845899f110816b8871758e3b371e020c226e  0062-kebab-pm8008-chip-enable-gpio93.patch
+3e7024162372e6411141df07d54d578f7b44ecf8ed2b78a8b62fa2a8cf0636137cf0ff1e65b765e7be80f4e109a2689836dc26639fcc2e2d4eef0d277a87bdc2  0063-kebab-front-reset-revert-active-low.patch
+53c14a3d2b186fec76959f2ffba6fc127a3739ef1fdb5f5f6aeb10d091e3d5d7f3c73aa6154838303b0100015d85944cad5b2155930474a5c806de782d9198c4  0064-kebab-imx471-temp-settle-clk-diag.patch
+3e0b1f3a05b78c0181f0bde2bfa888be767c638e892296e5347d85bac8d5f29ab8b15739c0698e8217e5ec4aa733e09f9ef469c41f7ad76a0fe0985429f64faa  0066-kebab-vdig-1p1v-exact.patch
+05e9e74bdbf299aa5f232a9de658019972d48f4f4907cea3b8533b2db30d5ab751b0a56ba9edee750d4d449c686f1ae43ce2b07a4e57f33138cb759f9bc51343  0068-kebab-revert-vdig-1p1v.patch
+58d19e61381353938ffc1c5c76465eef1bc23dc2e744991da7cbdd7c6930ac6d68c26749550ada1c1067b6f090795941ce8e0bb0f875b75c33f3f6ae1491691d  0069-kebab-imx471-powered-reset-pulse.patch
+6f2fc03e7a3cd9ab194f7063a5c157bced92bc2c350c3730c7b197c269d7ddc22d79c8a137e16929c896076a115b3aeda2784068a1a539764b4c421f36f43a60  0070-kebab-imx471-3s-window-for-scan.patch
+3f23cd0d18dff8960f5a6c21c875d48cca5345a4307e87c73e59e4c79833aa050aa1d9773c44a88b32dc8f525e6d63de3fc74a398e67b8c13c4a7ff76de20a34  0071-kebab-revert-3s-window.patch
+3fb3ec204e6af07ffb9479c8b11046b20e67d680bbc2193d14c86838e457b70ea5918b9c6ac8c48eee2e154bdc515c1fafd15e05bfa37d97845fd43afb9c342a  0072-kebab-cci1-pin-clock-rate-37500000.patch
+5b6e0d09f456069e87cc3b7e05db8a06bd0495a1cb8581229fc830264cbed943fbbd98d699c75b73fcf8f7fc75282bf41f1ca1ac6170a5fb01ec2f4d60ff4f46  0073-kebab-front-camera-move-to-cci1-master1.patch
+f5c86789e9d01c613f17c98fad643458b4a599a02407dc86e2437534cf24eada8946bf83f72170e4757a3f8b2c75221c8933a06c321266fec9cd693317f3240c  0074-kebab-revert-cci1-master1-move.patch
+feee46431e295a7cc1a3ab9fefb89cf8ae90192716f2c52ae6f589b82b29d4d0288dc4ef71cf4f9e70dad23a0cf785c9db26d4569adbcb1153868f9bc9793338  0075-kebab-imx471-temp-full-bus-scan-while-powered.patch
+9e8900766f0ccaa2a698ab276bf4951118828e8468eab9b00010cc2b0f6deef1a3b89251d71bca7ccfa07c85ad17963abf9c8c1eb82c34a2baf2b1238108cd3a  0076-kebab-revert-imx471-temp-full-bus-scan.patch
+469347ddb32596fc2d9f0cfea633cb829b2fa55c94e226fe6431f9e970e8de2a80d6abc718999165eebcdc30827e1da00d08316b15d2b6e70d13ee229d721947  0077-kebab-front-vana-active-high.patch
+cf4618909534840760c83b8575af9e35f43c9cb6c9e2ff5514ed6b17a89729ce772c805a805103e1dce747681a776996b872d775a854dc36defc55edaa437096  0078-kebab-cci1-i2c0-400khz.patch
+6f2ebb4d88f87bf1f3a033e25bbc180981615a278ddffdba7da7b063e15c576e90911ec6cb8597cd4573ccbbf330095dd27d9eed2ccdb3b93ec236d88b8675b7  0079-kebab-imx471-temp-rescan-vana-fixed-400khz.patch
+b5d1e7717c83f78fc2da4b08945d20a749d9df0bf655134f5bca365040815ce277ea5fa78db3badf8f935c2a8277aeb88b34e64d1f800d604f7d4aee471e10cf  0080-kebab-vdig-1p104v-nearest-step.patch
+961837680874730bc9b066c2a5641e6e98af8589ac2551ebb044aee98f04f57731dfde45ce86db4c8adea5206ccd763de8876316cc843305cd3913c41dfcba01  0081-kebab-revert-imx471-temp-rescan.patch
+2a7a08135b0a502bf38985207e86cb403c4625854ba32d27d4462ad1aa650316a972f880b3b4e7577baa2a62f1533f3729e7576b960981847c4b24d255dd391d  0082-kebab-imx471-vendor-power-sequence.patch
+90a8f183a8adb87768400ca09eeeb7b30da09d94e97c3c3d25f1673feb9391b4e2a32ddaed0c313f860bef312dfe46c7caad9968e0d723a69c83db0072a90e60  0083-kebab-front-camera-to-cci1-master1.patch
+93c430622ad000abfe11a2de6601703ebc244f9512daad27d6cd49c3e2152fa9c3f749b91ce6d95b4a7b688d045ae742c21897ab7ab83ee2dc06c3a2a64a0f9e  0084-kebab-imx471-temp-scan-master1.patch
+be56980cab794392817005021107e0ff39c57516b83e6a8c492b58835e7db2239794f6f933425427fb1d7cc8d94f8c0f8eb52c67c77928b91707e040a0284c70  0085-kebab-front-imx471-address-0x10.patch
+e71ce22a1898f6f3cfd2068eaa51543eed3442355d8451c9751b7af8b90589889d89fcce45bcabd8a4c8a0827fe9b58b7c2281ecb9b09b4db6fe1a0ac5434dac  0086-kebab-camss-csiphy-vdda-supplies.patch
+ba550828aa73e305c7d80bb07c89bd80eaef6c0d32e9c16bb3ee75dc6b568e9bd97df7cc8748643f604a199e9f6f0a6bddfe1a29e542e0f2626e9dad9fb6e324  0087-kebab-temp-diag-csiphy-settle.patch
+b16c8f917f0a34829f2f3f3dde8c1a33b3aa2c27159ef171fbfafc7346a8683a0397fd008cfbbd1893843dc28713409c06975e7fa84fd963a017045fc9029dc4  0088-kebab-csiphy4-lane-numbering.patch
+57cd52725a656b5a798ba08d0014fb0a14040363c7801d5292e9cbe118dbf72fefe01df56a262cf178e314e3e1cb7e8b39dbfa2bf35ec6f42452346c877d05e2  0089-kebab-revert-csiphy-diag.patch
+c0f48bb34e11b9de0dfc33551cdbd06fb4a8e284647bb37d50c155915bb63399bac0f5815ee8434e6bf2b804caf03a92518de38ce7e0b3d1df37a778bb76871d  0090-kebab-revert-imx471-scan-diag.patch
+a1ba8ea4538dd0b7bb825bd0cee98a261e1cf0f99fed58085a36a53ed52994900556a581d72c2f7388eef9075dee3da47e158a1bd02adde55a76d923b03f46fe  0091-kebab-sdx55-fusion-no-m3.patch
+ab986d00fded98e902aa7ec7e8d2a1c77d3d579f7a44812e3a88c12c126086e0dc82f7a4d689a8ca67f79984268d1da821fd370f48a1875c1404df18be187e92  0092-kebab-mhi-bind-efs-channel.patch
+"

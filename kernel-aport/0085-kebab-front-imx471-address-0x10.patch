@@ -1,0 +1,77 @@
+From 73f36d2d25221df841e979e3996ee6e3438df21c Mon Sep 17 00:00:00 2001
+From: kebab bring-up <local@invalid>
+Date: Fri, 18 Sep 2026 13:58:40 +0200
+Subject: [PATCH] kebab: front IMX471 is at slave address 0x10, not 0x1a
+
+The 0084 powered scan on CCI1 master 1 found three devices:
+
+  imx471 24-001a: DIAG(0084): 0x10 ACKED
+  imx471 24-001a: DIAG(0084): 0x54 ACKED
+  imx471 24-001a: DIAG(0084): 0x5c ACKED
+
+0x54 and 0x5c are the front module's own EEPROM. 0x10 is the sensor. It
+has never appeared in any earlier scan.
+
+0x1a came from patch 0059 as the IMX family default and was never
+confirmed for this board. The deep vendor-binary investigation on
+2026-09-17 looked for a literal numeric address and did not find one, so
+the default was left in place unchallenged. IMX sensors are commonly
+strappable between 0x10 and 0x1a, and this module uses 0x10.
+
+Every scan that could have caught this was disqualified for an unrelated
+reason:
+
+  0070  VANA inverted (0060), sensor unpowered; also master 0
+  0075  VANA inverted, sensor unpowered; also master 0
+  0079  correctly powered, but master 0 -- the GC5035 macro camera's bus
+
+Only after 0077 fixed the VANA polarity, 0082 applied the vendor power
+sequence and 0083 moved the node to the master the vendor devicetree
+assigns, was a scan finally pointed at a powered sensor on the right bus.
+
+This also retires the hardware-fault hypothesis. The module answers on
+three addresses. It is present, powered and electrically healthy; the
+0x50/0x58 EEPROM cited for two days as proof that "the bus is alive so
+the sensor must be dead" belonged to a different camera on a different
+bus.
+
+Point the node at 0x10 and rename it camera@10 to match.
+---
+ .../boot/dts/qcom/sm8250-oneplus-kebab.dts    | 20 +++++++++++++++++--
+ 1 file changed, 18 insertions(+), 2 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
+index 77ba5549e..b97e81442 100644
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
+@@ -2062,9 +2062,25 @@ &cci1_i2c1 {
+ 	 */
+ 	clock-frequency = <400000>;
+ 
+-	camf_imx471: camera@1a {
++	/*
++	 * Slave address 0x10, not 0x1a.
++	 *
++	 * The 0084 powered scan on CCI1 master 1 found three devices:
++	 *   0x10  <- this sensor
++	 *   0x54  ] the front module's own EEPROM
++	 *   0x5c  ]
++	 *
++	 * 0x1a was inherited from patch 0059 as the family default and was
++	 * never confirmed against this board. The vendor binaries never
++	 * exposed a literal address, and every scan that could have caught
++	 * 0x10 was disqualified: 0070 and 0075 ran with VANA inverted, and
++	 * 0079 ran on master 0, the GC5035's bus.
++	 *
++	 * IMX parts commonly strap between 0x10 and 0x1a.
++	 */
++	camf_imx471: camera@10 {
+ 		compatible = "sony,imx471";
+-		reg = <0x1a>;
++		reg = <0x10>;
+ 
+ 		/* Vendor order VANA -> VDIG -> VIO; the driver enables these
+ 		 * in the order of its own supply table, not this one. */
+-- 
+2.55.0
+

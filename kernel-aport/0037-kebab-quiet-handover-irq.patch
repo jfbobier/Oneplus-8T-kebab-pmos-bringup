@@ -1,0 +1,18 @@
+--- a/drivers/remoteproc/qcom_q6v5.c
++++ b/drivers/remoteproc/qcom_q6v5.c
+@@ -165,7 +165,14 @@
+ 	struct qcom_q6v5 *q6v5 = data;
+ 
+ 	if (q6v5->handover_issued) {
+-		dev_err(q6v5->dev, "Handover signaled, but it already happened\n");
++		/*
++		 * kebab: not an error. The SLPI asserts this level-triggered
++		 * sideband repeatedly after handover has already been issued,
++		 * so dev_err here produced 766 lines in a single session and
++		 * buried everything else in dmesg. Nothing is wrong and
++		 * nothing is retried - demote it.
++		 */
++		dev_dbg(q6v5->dev, "Handover signaled, but it already happened\n");
+ 		return IRQ_HANDLED;
+ 	}
+ 

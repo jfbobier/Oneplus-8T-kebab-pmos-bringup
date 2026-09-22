@@ -1,0 +1,47 @@
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder.c	2026-08-29 08:19:31.000000000 +0200
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder.c	2026-09-11 16:03:08.198576002 +0200
+@@ -2707,6 +2707,9 @@
+ 	return ret;
+ }
+ 
++/* kebab: bound the frame-done timeout retry storm, see below */
++#define KEBAB_FRAME_DONE_MAX_CONSECUTIVE_TIMEOUTS 20
++
+ static void dpu_encoder_frame_done_timeout(struct timer_list *t)
+ {
+ 	struct dpu_encoder_virt *dpu_enc = timer_container_of(dpu_enc, t,
+@@ -2733,6 +2736,34 @@
+ 	if (atomic_inc_return(&dpu_enc->frame_done_timeout_cnt) == 1)
+ 		msm_disp_snapshot_state(drm_enc->dev);
+ 
++	/*
++	 * kebab: give up cleanly after repeated consecutive timeouts on a
++	 * dead link instead of leaving frame_busy_mask permanently set.
++	 * Unlike the success path in dpu_encoder_frame_done_callback(),
++	 * this timeout path never cleared frame_busy_mask or deleted the
++	 * timer, so it could never reach its own "invalid timeout,
++	 * frame_busy_mask=0" early-return above -- a link that fails to
++	 * train (msm_dp_ctrl_link_train_1_2) kept this timer re-arming and
++	 * firing every ~83ms indefinitely, which on real hardware ran for
++	 * 18+ seconds before ending in a silent hard SoC reset instead of a
++	 * clean failure. Mirror the existing success-path cleanup once a
++	 * dead link is unambiguous.
++	 */
++	if (atomic_read(&dpu_enc->frame_done_timeout_cnt) >=
++			KEBAB_FRAME_DONE_MAX_CONSECUTIVE_TIMEOUTS) {
++		unsigned int i;
++
++		DPU_ERROR_ENC(dpu_enc,
++			"giving up after %d consecutive frame done timeouts, forcing idle\n",
++			KEBAB_FRAME_DONE_MAX_CONSECUTIVE_TIMEOUTS);
++
++		for (i = 0; i < dpu_enc->num_phys_encs; i++)
++			clear_bit(i, dpu_enc->frame_busy_mask);
++
++		if (!dpu_enc->frame_busy_mask[0])
++			timer_delete(&dpu_enc->frame_done_timer);
++	}
++
+ 	event = DPU_ENCODER_FRAME_EVENT_ERROR;
+ 	trace_dpu_enc_frame_done_timeout(DRMID(drm_enc), event);
+ 	dpu_crtc_frame_event_cb(dpu_enc->crtc, event);

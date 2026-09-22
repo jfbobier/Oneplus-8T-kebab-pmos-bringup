@@ -1,0 +1,47 @@
+diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
+index 0f575b518..2fb30253f 100644
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
+@@ -1837,6 +1837,32 @@ data-pins {
+ 	};
+ };
+ 
++&tlmm {
++	/* PM8008 camera PMIC chip-enable. Per kebab's own decompiled
++	 * overlay (kebab-19805-camera.dts, fragment@122/123): pm8008_active
++	 * on gpio93 must be driven output-high or the chip never actually
++	 * responds to register access, even though the i2c client itself
++	 * still shows up. Without this, pm8008_probe()'s
++	 * devm_regmap_add_irq_chip_fwnode() fails writing the MISC
++	 * peripheral's INT_EN_CLR register (0x916) with -ENXIO, aborts
++	 * before devm_mfd_add_devices(), and none of L1P-L7P (including
++	 * cam_vdig) ever get registered as regulators. */
++	pm8008_active: pm8008-active-state {
++		pins = "gpio93";
++		function = "gpio";
++		drive-strength = <2>;
++		output-high;
++		bias-pull-up;
++	};
++
++	pm8008_interrupt: pm8008-interrupt-state {
++		pins = "gpio112";
++		function = "gpio";
++		bias-disable;
++		input-enable;
++	};
++};
++
+ &i2c2 {
+ 	status = "okay";
+ 
+@@ -1847,6 +1873,9 @@ pm8008: pmic@8 {
+ 		interrupt-parent = <&tlmm>;
+ 		interrupts = <112 IRQ_TYPE_EDGE_RISING>;
+ 
++		pinctrl-names = "default";
++		pinctrl-0 = <&pm8008_active>, <&pm8008_interrupt>;
++
+ 		vdd-l1-l2-supply = <&vreg_s8c_1p3>;
+ 		vdd-l3-l4-supply = <&vreg_bob>;
+ 		vdd-l5-supply = <&vreg_bob>;

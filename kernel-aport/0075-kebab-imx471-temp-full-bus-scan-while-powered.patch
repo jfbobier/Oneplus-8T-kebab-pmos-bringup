@@ -1,0 +1,61 @@
+From 66532efc9acd205cde0be8d55f0f13cf9e175e8a Mon Sep 17 00:00:00 2001
+From: kebab bring-up <local@invalid>
+Date: Thu, 17 Sep 2026 14:24:12 +0200
+Subject: [PATCH] kebab: imx471 TEMP DIAG (0075) -- full bus scan while
+ powered, with corrected clock
+
+The 0070 diagnostic (184-pass full-bus scan finding nothing but the
+EEPROM at 0x50/0x58) ran while the CCI1 clock was still misconfigured
+at 19.2MHz instead of the 37.5MHz the CCI v2 timing table assumes for
+qcom,sm8250-cci -- fixed since in patch 0072 and confirmed live via
+clk_summary. That scan's silence is therefore not trustworthy evidence
+of a dead bus or missing sensor: out-of-spec SCL timing could plausibly
+suppress ACKs from every address uniformly.
+
+This redoes the same full-bus scan (0x08-0x77) from inside
+imx471_power_on(), immediately after the existing reset pulse and
+50-60ms settle, with full VANA/MCLK4/reset sequencing active and the
+corrected clock rate in place. Every address that ACKs is logged via
+dev_info so it shows up in dmesg. Temporary -- revert once the sensor
+is confirmed working or the real address is found.
+---
+ drivers/media/i2c/imx471.c | 23 +++++++++++++++++++++++
+ 1 file changed, 23 insertions(+)
+
+diff --git a/drivers/media/i2c/imx471.c b/drivers/media/i2c/imx471.c
+index 8cca49580..4f48f75b6 100644
+--- a/drivers/media/i2c/imx471.c
++++ b/drivers/media/i2c/imx471.c
+@@ -576,6 +576,29 @@ static int imx471_power_on(struct device *dev)
+ 	 * app doesn't stall for 3s once the hardware is sorted. */
+ 	usleep_range(50000, 60000);
+ 
++	/* TEMP DIAGNOSTIC (0075, remove once camera works): the 0070 scan
++	 * above ran while the CCI1 clock was still misconfigured at 19.2MHz
++	 * instead of the 37.5MHz the CCI v2 timing table assumes (fixed in
++	 * patch 0072) -- so that scan's silence is not trustworthy evidence
++	 * of a dead bus. Redo it now, fully powered/clocked/reset-released,
++	 * with the corrected clock rate, and log every address that ACKs. */
++	{
++		struct i2c_client *client = to_i2c_client(dev);
++		struct i2c_adapter *adap = client->adapter;
++		int addr;
++
++		dev_info(dev, "imx471 TEMP DIAG (0075): full bus scan while powered, corrected clock\n");
++		for (addr = 0x08; addr <= 0x77; addr++) {
++			union i2c_smbus_data data;
++			int scan_ret = i2c_smbus_xfer(adap, addr, 0,
++						      I2C_SMBUS_READ, 0,
++						      I2C_SMBUS_BYTE, &data);
++			if (scan_ret >= 0)
++				dev_info(dev, "imx471 TEMP DIAG (0075): addr 0x%02x ACKED\n", addr);
++		}
++		dev_info(dev, "imx471 TEMP DIAG (0075): scan complete\n");
++	}
++
+ 	return 0;
+ }
+ 
+-- 
+2.55.0
+

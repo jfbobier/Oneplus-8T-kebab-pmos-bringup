@@ -1,0 +1,241 @@
+--- a/drivers/regulator/Kconfig	2026-08-29 08:19:31.000000000 +0200
++++ b/drivers/regulator/Kconfig	2026-09-11 14:26:12.695782629 +0200
+@@ -1890,3 +1890,12 @@
+ 	  for LCD display panel.
+ 
+ endif
++
++config REGULATOR_MP2762_OTG
++	tristate "MP2762A OTG VBUS regulator (kebab)"
++	depends on I2C
++	help
++	  OTG VBUS boost regulator for the MP2762A charger IC on the
++	  OnePlus 8T (kebab).
++
++
+--- a/drivers/regulator/Makefile	2026-08-29 08:19:31.000000000 +0200
++++ b/drivers/regulator/Makefile	2026-09-11 14:25:11.528296211 +0200
+@@ -219,3 +219,4 @@
+ obj-$(CONFIG_REGULATOR_WM8994) += wm8994-regulator.o
+ 
+ ccflags-$(CONFIG_REGULATOR_DEBUG) += -DDEBUG
++obj-$(CONFIG_REGULATOR_MP2762_OTG)	+= mp2762-otg-regulator.o
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts	2026-09-11 14:28:01.159902259 +0200
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts	2026-09-11 14:29:33.970359073 +0200
+@@ -1615,3 +1615,41 @@
+ 		line-name = "ap2mdm-errfatal";
+ 	};
+ };
++
++&i2c5 {
++	charger@5c {
++		compatible = "op,mp2650-charger";
++		reg = <0x5c>;
++
++		otg-gate-gpios = <&pm8150_gpios 3 GPIO_ACTIVE_HIGH>;
++		pinctrl-names = "default";
++		pinctrl-0 = <&mps_otg_en_default>;
++
++		/*
++		 * Deliberately not wired as anyone's vbus-supply yet. This
++		 * flash only proves the i2c/gpio hardware access path (probe
++		 * succeeding in dmesg = address, gpio and register writes
++		 * all correct). Wiring it as the real vdd-vbus-supply on
++		 * &pm8150b_typec, replacing pm8150b_vbus, is the deliberate
++		 * next step once probe is confirmed clean -- not tonight,
++		 * to avoid risking the DP dock's already-working VBUS path
++		 * on an unverified regulator in the same flash.
++		 */
++		otg_vbus: otg-vbus {
++			regulator-name = "otg-vbus";
++			regulator-min-microvolt = <5000000>;
++			regulator-max-microvolt = <5000000>;
++		};
++	};
++};
++
++&pm8150_gpios {
++	mps_otg_en_default: mps-otg-en-default-state {
++		pins = "gpio3";
++		function = "normal";
++		power-source = <1>;
++		bias-disable;
++		drive-strength = <3>;
++		output-low;
++	};
++};
+--- /dev/null	2026-09-11 13:58:55.113576212 +0200
++++ b/drivers/regulator/mp2762-otg-regulator.c	2026-09-11 14:24:49.102335099 +0200
+@@ -0,0 +1,172 @@
++// SPDX-License-Identifier: GPL-2.0
++/* MP2762A OTG VBUS regulator for OnePlus 8T (kebab) -- part 1 marker */
++#include <linux/bitops.h>
++#include <linux/gpio/consumer.h>
++#include <linux/i2c.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/regulator/driver.h>
++#include <linux/regulator/of_regulator.h>
++
++#define MP2762_REG07_OTG_ILIM		0x07
++#define MP2762_REG07_OTG_ILIM_MASK	GENMASK(3, 0)
++#define MP2762_REG07_OTG_ILIM_1500MA	0x06
++
++#define MP2762_REG08_CTRL		0x08
++#define MP2762_REG08_OTG_EN		BIT(5)
++
++#define MP2762_REG09_WATCHDOG		0x09
++#define MP2762_REG09_WATCHDOG_MASK	GENMASK(5, 4)
++#define MP2762_REG09_WATCHDOG_OFF	0x00
++
++struct mp2762_otg {
++	struct i2c_client *client;
++	struct gpio_desc *otg_gate_gpio;
++	struct regulator_dev *rdev;
++};
++
++static int mp2762_read(struct i2c_client *c, u8 reg)
++{
++	int ret = i2c_smbus_read_byte_data(c, reg);
++
++	if (ret < 0)
++		dev_err(&c->dev, "reg 0x%02x read failed: %d\n", reg, ret);
++	return ret;
++}
++
++static int mp2762_update(struct i2c_client *c, u8 reg, u8 mask, u8 val)
++{
++	int old = mp2762_read(c, reg);
++	int ret;
++
++	if (old < 0)
++		return old;
++
++	ret = i2c_smbus_write_byte_data(c, reg, (u8)((old & ~mask) | (val & mask)));
++	if (ret < 0)
++		dev_err(&c->dev, "reg 0x%02x write failed: %d\n", reg, ret);
++	return ret;
++}
++
++static int mp2762_otg_enable(struct regulator_dev *rdev)
++{
++	struct mp2762_otg *chg = rdev_get_drvdata(rdev);
++	int ret;
++
++	gpiod_set_value_cansleep(chg->otg_gate_gpio, 1);
++
++	ret = mp2762_update(chg->client, MP2762_REG07_OTG_ILIM,
++			     MP2762_REG07_OTG_ILIM_MASK,
++			     MP2762_REG07_OTG_ILIM_1500MA);
++	if (ret < 0)
++		goto err_gpio;
++
++	ret = mp2762_update(chg->client, MP2762_REG08_CTRL,
++			     MP2762_REG08_OTG_EN, MP2762_REG08_OTG_EN);
++	if (ret < 0)
++		goto err_gpio;
++
++	ret = mp2762_update(chg->client, MP2762_REG09_WATCHDOG,
++			     MP2762_REG09_WATCHDOG_MASK,
++			     MP2762_REG09_WATCHDOG_OFF);
++	if (ret < 0) {
++		mp2762_update(chg->client, MP2762_REG08_CTRL,
++			      MP2762_REG08_OTG_EN, 0);
++		goto err_gpio;
++	}
++
++	dev_info(&chg->client->dev, "OTG VBUS enabled (5V, 2S pack, 1.5A ilim)\n");
++	return 0;
++
++err_gpio:
++	gpiod_set_value_cansleep(chg->otg_gate_gpio, 0);
++	return ret;
++}
++
++static int mp2762_otg_disable(struct regulator_dev *rdev)
++{
++	struct mp2762_otg *chg = rdev_get_drvdata(rdev);
++	int ret;
++
++	gpiod_set_value_cansleep(chg->otg_gate_gpio, 0);
++
++	ret = mp2762_update(chg->client, MP2762_REG08_CTRL,
++			     MP2762_REG08_OTG_EN, 0);
++
++	dev_info(&chg->client->dev, "OTG VBUS disabled\n");
++	return ret;
++}
++
++static int mp2762_otg_is_enabled(struct regulator_dev *rdev)
++{
++	struct mp2762_otg *chg = rdev_get_drvdata(rdev);
++	int val = mp2762_read(chg->client, MP2762_REG08_CTRL);
++
++	if (val < 0)
++		return val;
++	return !!(val & MP2762_REG08_OTG_EN);
++}
++
++static const struct regulator_ops mp2762_otg_ops = {
++	.enable = mp2762_otg_enable,
++	.disable = mp2762_otg_disable,
++	.is_enabled = mp2762_otg_is_enabled,
++};
++
++static const struct regulator_desc mp2762_otg_desc = {
++	.name = "otg-vbus",
++	.of_match = "otg-vbus",
++	.ops = &mp2762_otg_ops,
++	.type = REGULATOR_VOLTAGE,
++	.owner = THIS_MODULE,
++	.fixed_uV = 5000000,
++	.n_voltages = 1,
++};
++
++static int mp2762_otg_probe(struct i2c_client *client)
++{
++	struct device *dev = &client->dev;
++	struct regulator_config config = { .dev = dev };
++	struct mp2762_otg *chg;
++
++	chg = devm_kzalloc(dev, sizeof(*chg), GFP_KERNEL);
++	if (!chg)
++		return -ENOMEM;
++
++	chg->client = client;
++
++	chg->otg_gate_gpio = devm_gpiod_get(dev, "otg-gate", GPIOD_OUT_LOW);
++	if (IS_ERR(chg->otg_gate_gpio))
++		return dev_err_probe(dev, PTR_ERR(chg->otg_gate_gpio),
++				      "failed to get otg-gate gpio\n");
++
++	config.driver_data = chg;
++	config.of_node = dev->of_node;
++
++	chg->rdev = devm_regulator_register(dev, &mp2762_otg_desc, &config);
++	if (IS_ERR(chg->rdev))
++		return dev_err_probe(dev, PTR_ERR(chg->rdev),
++				      "failed to register otg-vbus regulator\n");
++
++	i2c_set_clientdata(client, chg);
++	dev_info(dev, "kebab MP2762 OTG-VBUS regulator registered\n");
++	return 0;
++}
++
++static const struct of_device_id mp2762_otg_of_match[] = {
++	{ .compatible = "op,mp2650-charger" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, mp2762_otg_of_match);
++
++static struct i2c_driver mp2762_otg_driver = {
++	.driver = {
++		.name = "mp2762-otg-regulator",
++		.of_match_table = mp2762_otg_of_match,
++	},
++	.probe = mp2762_otg_probe,
++};
++module_i2c_driver(mp2762_otg_driver);
++
++MODULE_DESCRIPTION("MP2762A OTG VBUS regulator (OnePlus 8T kebab)");
++MODULE_LICENSE("GPL");

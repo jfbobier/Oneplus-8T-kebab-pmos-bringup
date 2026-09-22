@@ -1,0 +1,49 @@
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
+@@ -1098,3 +1098,46 @@
+ &pcie1_phy {
+ 	status = "disabled";
+ };
++
++/*
++ * Remove hardware this board does not have.
++ *
++ * Both came in when the kebab dts was copied wholesale from the OnePlus
++ * 8 Pro in 2024.
++ *
++ * pm8009: the SPMI devices enumerate from the devicetree, but every
++ * register read to sid 0xa / 0xb fails with "transaction failed (0x3)",
++ * and RPMh cmd-db has no smpf2 resource -- so its rpmh regulators cannot
++ * register either. The PMIC is not populated here. Disabling it drops:
++ *
++ *   spmi spmi-0: pmic_arb_check_chnl_status_v1: 0xa 0x104: transaction failed
++ *   spmi spmi-0: pmic_arb_check_chnl_status_v1: 0xb 0x104: transaction failed
++ *   WARNING: drivers/spmi/spmi-pmic-arb.c:316 (x2)
++ *   pmic-spmi 0-0a: probe with driver pmic-spmi failed with error -5
++ *   pmic-spmi 0-0b: probe with driver pmic-spmi failed with error -5
++ *   qcom-rpmh-regulator regulators-0: smps2: could not find RPMh address
++ *
++ * Nothing we use consumes an f-series rail; the WiFi PMU was moved to
++ * vreg_s6a_0p95 for exactly this reason.
++ */
++
++&{/soc@0/spmi@c440000/pmic@a} {
++	status = "disabled";
++};
++
++&{/soc@0/spmi@c440000/pmic@b} {
++	status = "disabled";
++};
++
++&apps_rsc {
++	/delete-node/ regulators-0;
++};
++
++/*
++ * ti,bq25980 fast charger: never initialises ("Cannot initialize the chip")
++ * and /sys/class/power_supply lists only the bq27541 fuel gauge. Battery
++ * reporting is unaffected by removing it.
++ */
++&i2c5 {
++	/delete-node/ charger@66;
++};

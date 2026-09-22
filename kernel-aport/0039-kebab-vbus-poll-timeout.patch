@@ -1,0 +1,28 @@
+--- a/drivers/usb/typec/tcpm/qcom/qcom_pmic_typec_port.c
++++ b/drivers/usb/typec/tcpm/qcom/qcom_pmic_typec_port.c
+@@ -310,11 +310,23 @@
+ 		val = TYPEC_SM_VBUS_VSAFE0V;
+ 	}
+ 
+-	/* Poll waiting for transition to required vSafe5V or vSafe0V */
++	/*
++	 * Poll waiting for transition to required vSafe5V or vSafe0V
++	 *
++	 * kebab: 250 ms is too short for this board. The MP2762A OTG boost
++	 * (2S pack -> 5 V, see the charger@5c regulator) was measured reaching
++	 * vSafe5V somewhere between 550 ms and ~1.1 s, with the attached device
++	 * enumerating at +1093 ms. That is outside the Type-C tSrcTurnOn budget
++	 * of 275 ms, so the warning below was correct - but it fired on every
++	 * single source attach while everything then worked, which is the worst
++	 * kind of log noise. This poll exits the moment the bit is set, so a
++	 * longer tolerance costs nothing when VBUS is quick and only stops the
++	 * false alarm when it is slow.
++	 */
+ 	ret = regmap_read_poll_timeout(pmic_typec_port->regmap,
+ 				       pmic_typec_port->base + TYPEC_SM_STATUS_REG,
+ 				       sm_stat, sm_stat & val,
+-				       100, 250000);
++				       100, 1200000);
+ 	if (ret)
+ 		dev_warn(pmic_typec_port->dev, "vbus vsafe%dv fail\n", on ? 5 : 0);
+ 

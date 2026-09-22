@@ -1,0 +1,55 @@
+diff -urN old/drivers/bus/mhi/host/pci_generic.c new/drivers/bus/mhi/host/pci_generic.c
+--- old/drivers/bus/mhi/host/pci_generic.c	2026-09-21 11:08:45.972066690 +0200
++++ new/drivers/bus/mhi/host/pci_generic.c	2026-09-21 11:08:45.986969908 +0200
+@@ -434,6 +434,15 @@
+ 	.dma_data_width = 32,
+ 	.mru_default = 32768,
+ 	.sideband_wake = false,
++	/*
++	 * The phone-embedded SDX55 cannot be resumed reliably from M3. After a
++	 * number of autosuspend cycles the resume times out ("Did not enter M0
++	 * state", "failed to resume device: -5"); mhi_pci_recovery_work() then
++	 * issues pci_try_reset_function(), the endpoint never re-trains, and the
++	 * modem is unreachable until a cold boot. There is no sideband wake wired
++	 * on this board to recover it either, so stay out of M3 entirely.
++	 */
++	.no_m3 = true,
+ };
+ 
+ static const struct mhi_pci_dev_info mhi_qcom_sa8775p_info = {
+@@ -1166,6 +1175,7 @@
+ 	struct timer_list health_check_timer;
+ 	unsigned long status;
+ 	bool reset_on_remove;
++	bool no_m3;
+ };
+ 
+ static int mhi_pci_read_reg(struct mhi_controller *mhi_cntrl,
+@@ -1185,6 +1195,9 @@
+ 			      enum mhi_callback cb)
+ {
+ 	struct pci_dev *pdev = to_pci_dev(mhi_cntrl->cntrl_dev);
++	struct mhi_pci_device *mhi_pdev = container_of(mhi_cntrl,
++						       struct mhi_pci_device,
++						       mhi_cntrl);
+ 
+ 	/* Nothing to do for now */
+ 	switch (cb) {
+@@ -1194,7 +1207,8 @@
+ 		pm_runtime_forbid(&pdev->dev);
+ 		break;
+ 	case MHI_CB_EE_MISSION_MODE:
+-		pm_runtime_allow(&pdev->dev);
++		if (!mhi_pdev->no_m3)
++			pm_runtime_allow(&pdev->dev);
+ 		break;
+ 	default:
+ 		break;
+@@ -1447,6 +1461,7 @@
+ 		return -ENOMEM;
+ 
+ 	INIT_WORK(&mhi_pdev->recovery_work, mhi_pci_recovery_work);
++	mhi_pdev->no_m3 = info->no_m3;
+ 
+ 	if (pdev->is_virtfn && info->vf_config)
+ 		mhi_cntrl_config = info->vf_config;

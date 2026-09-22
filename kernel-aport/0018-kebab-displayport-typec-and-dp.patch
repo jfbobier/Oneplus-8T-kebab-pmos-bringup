@@ -1,0 +1,179 @@
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
+@@ -4,6 +4,7 @@
+ #include <dt-bindings/arm/qcom,ids.h>
+ #include <dt-bindings/regulator/qcom,rpmh-regulator.h>
+ #include <dt-bindings/phy/phy.h>
++#include <dt-bindings/usb/pd.h>
+ #include "sm8250.dtsi"
+ #include "pm8150.dtsi"
+ #include "pm8150b.dtsi"
+@@ -1360,3 +1361,168 @@
+ 		local-bd-address = [ 55 24 f1 37 00 02 ];
+ 	};
+ };
++
++/*
++ * DisplayPort alternate mode over USB-C: combo PHY + DP controller + Type-C.
++ *
++ * WHY THIS IS ONE PATCH AND NOT THREE
++ *
++ * The original plan was to bring DP up in three isolated steps (PHY+DP, then
++ * Type-C, then host mode). That is not possible: the msm DP driver resolves its
++ * downstream bridge with devm_drm_of_get_bridge() on port@1, and the chain is
++ *
++ *   mdss_dp -> usb_1_qmpphy      (phy-qcom-qmp-combo: drm_aux_bridge_register,
++ *                                 a *passthrough* bridge that itself requires a
++ *                                 downstream bridge via its own port@0)
++ *           -> pm8150b_typec connector
++ *                                (qcom_pmic_typec: devm_drm_dp_hpd_bridge_alloc
++ *                                 + _add, the bridge that TERMINATES the chain
++ *                                 and carries HPD)
++ *
++ * With no Type-C connector node there is nothing to terminate the chain, so the
++ * aux bridge fails -ENODEV, mdss_dp defers forever, and because mdss_dp is an
++ * msm-drm component the whole display (DSI panel included) never binds. That was
++ * observed directly: "aux_bridge.aux_bridge.0: error -ENODEV: failed to acquire
++ * drm_bridge" followed by "displayport-controller: deferred probe pending" and no
++ * msm_dpu binds at all. So DP and Type-C have to land together.
++ *
++ * WHAT KILLED PATCH 0015
++ *
++ * 0015 put the FSA4480 at 0x42 on &i2c1. On this board &i2c1 is the NFC bus
++ * (nfc@28). The stock OxygenOS devicetree puts it on the i2c controller at
++ * 0x884000 -> "fsa4480 = /soc/i2c@884000/fsa4480@42", and 0x884000 is mainline
++ * &i2c15 (&i2c1 is 0x984000). sm8250-xiaomi-pipa-common.dtsi independently
++ * agrees: fcs,fsa4480 @0x42 on &i2c15. With the mux on the wrong bus it never
++ * probes, so typec_mux_get()/typec_switch_get() defer, tcpm_register_port()
++ * never completes, the HPD bridge is never added, and DP takes the display down
++ * exactly as above. (That same i2c15 bus also carries the TFA9874 speaker amps
++ * at 0x34/0x35 for the audio workstream later.)
++ *
++ * WHAT IS DELIBERATELY NOT HERE
++ *
++ * &usb_1 and &usb_1_dwc3 are untouched: the port stays USB 2.0 peripheral with
++ * qcom,select-utmi-as-pipe-clk. DP does not need the USB3 pipe clock (it uses the
++ * PHY's DP block plus dispcc clocks parented to the PHY's DP link/vco clocks), so
++ * leaving dwc3 alone keeps USB networking - the primary route into this device -
++ * and avoids the clock-enable hang that removing select-utmi-as-pipe-clk risks
++ * when the PHY's USB3 side is not up. Consequently connector port@0 (the HS path
++ * to dwc3) is omitted too, so TCPM does not look for a usb-role-switch that dwc3
++ * has not registered. USB3 + host mode is a separate later step.
++ *
++ * Expect: DSI panel unaffected, USB networking unaffected, a DP connector in DRM,
++ * and HPD + a picture when a USB-C DP adapter is plugged in. pm8150b_vbus is
++ * enabled because a passive USB-C -> HDMI adapter is bus powered and the phone
++ * has to source VBUS for it.
++ */
++
++&usb_1_qmpphy {
++	status = "okay";
++
++	vdda-phy-supply = <&vreg_l9a_1p2>;
++	vdda-pll-supply = <&vreg_l18a_0p92>;
++};
++
++&usb_1_qmpphy_out {
++	remote-endpoint = <&pm8150b_typec_mux_in>;
++};
++
++&usb_1_qmpphy_dp_in {
++	remote-endpoint = <&mdss_dp_out>;
++};
++
++&mdss_dp {
++	status = "okay";
++};
++
++&mdss_dp_out {
++	data-lanes = <0 1>;
++	remote-endpoint = <&usb_1_qmpphy_dp_in>;
++};
++
++&pm8150b_vbus {
++	regulator-min-microamp = <500000>;
++	regulator-max-microamp = <3000000>;
++	status = "okay";
++};
++
++&pm8150b_typec {
++	status = "okay";
++
++	vdd-pdphy-supply = <&vreg_l2a_3p1>;
++
++	connector {
++		compatible = "usb-c-connector";
++
++		op-sink-microwatt = <10000000>;
++		power-role = "dual";
++		data-role = "dual";
++		try-power-role = "sink";
++		self-powered;
++
++		source-pdos = <PDO_FIXED(5000, 3000,
++				PDO_FIXED_DUAL_ROLE |
++				PDO_FIXED_USB_COMM |
++				PDO_FIXED_DATA_SWAP)>;
++
++		sink-pdos = <PDO_FIXED(5000, 3000,
++				PDO_FIXED_DUAL_ROLE |
++				PDO_FIXED_USB_COMM |
++				PDO_FIXED_DATA_SWAP)>;
++
++		altmodes {
++			displayport {
++				svid = /bits/ 16 <0xff01>;
++				vdo = <0x00001c46>;
++			};
++		};
++
++		ports {
++			#address-cells = <1>;
++			#size-cells = <0>;
++
++			/*
++			 * port@0 (HS data path to usb_1_dwc3_hs_out) is intentionally
++			 * absent: dwc3 stays peripheral-only for now and registers no
++			 * usb-role-switch, so leaving the graph edge out keeps TCPM from
++			 * looking for one.
++			 */
++
++			port@1 {
++				reg = <1>;
++
++				pm8150b_typec_mux_in: endpoint {
++					remote-endpoint = <&usb_1_qmpphy_out>;
++				};
++			};
++
++			port@2 {
++				reg = <2>;
++
++				pm8150b_typec_sbu_out: endpoint {
++					remote-endpoint = <&fsa4480_sbu_mux>;
++				};
++			};
++		};
++	};
++};
++
++&i2c15 {
++	clock-frequency = <400000>;
++	status = "okay";
++
++	/* SBU / orientation switch, also used for analogue USB-C audio */
++	typec-mux@42 {
++		compatible = "fcs,fsa4480";
++		reg = <0x42>;
++
++		vcc-supply = <&vreg_bob>;
++		mode-switch;
++		orientation-switch;
++
++		port {
++			fsa4480_sbu_mux: endpoint {
++				remote-endpoint = <&pm8150b_typec_sbu_out>;
++			};
++		};
++	};
++};

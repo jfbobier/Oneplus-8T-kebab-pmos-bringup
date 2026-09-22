@@ -1,0 +1,19 @@
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts	2026-09-16 16:37:28.165859338 +0200
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts	2026-09-16 16:37:28.184233963 +0200
+@@ -1799,5 +1799,15 @@
+ 	pinctrl-names = "default";
+ 	pinctrl-0 = <&dmic01_active>;
+ 	vdd-micb-supply = <&vreg_s4a_1p8>;
+-	qcom,dmic-sample-rate = <600000>;
++	/*
++	 * 2.4 MHz, not Apollo's 600 kHz.  The driver derives the divider as
++	 * VA_MACRO_MCLK_FREQ (9.6 MHz) / rate, so 600 kHz is DIV_16 and only
++	 * 12.5x oversampling at 48 kHz - far below what a DMIC expects.  That
++	 * left un-decimated sigma-delta noise in the audio band, measured as a
++	 * floor rising from -120 dBFS at 1 kHz to -88 dBFS at 16 kHz and a
++	 * broadband floor of -48 dBFS at unity gain, so speech needed shouting.
++	 * 2.4 MHz is DIV_4, i.e. 50x oversampling, and matches stock's
++	 * qcom,tx-dmic-sample-rate in kona-audio-overlay.dtsi.
++	 */
++	qcom,dmic-sample-rate = <2400000>;
+ };

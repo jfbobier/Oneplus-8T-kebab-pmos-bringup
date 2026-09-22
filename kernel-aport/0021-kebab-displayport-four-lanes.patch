@@ -1,0 +1,21 @@
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
+@@ -1447,7 +1447,17 @@
+ };
+ 
+ &mdss_dp_out {
+-	data-lanes = <0 1>;
++	/*
++	 * Four lanes, not two. The DP altmode negotiates pin assignment C with this
++	 * adapter (4-lane DP, no USB3), and dwc3 is USB2-only here anyway, so all
++	 * four SuperSpeed lanes are free for DP. With data-lanes = <0 1> the
++	 * controller trains only 2 lanes: ~8.6 Gbps after 8b/10b at HBR2, which
++	 * cannot carry the 3840x2160@60 mode gnome-shell picks from this monitor's
++	 * EDID (~12.5 Gbps at 24bpp). The result was a mode set and successful link
++	 * training but no displayable video - monitor reports a signal and shows
++	 * black.
++	 */
++	data-lanes = <0 1 2 3>;
+ 	remote-endpoint = <&usb_1_qmpphy_dp_in>;
+ };
+ 

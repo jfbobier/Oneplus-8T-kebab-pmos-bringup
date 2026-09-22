@@ -1,0 +1,11 @@
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
+@@ -163,7 +163,7 @@
+ 			reg = <0x00 0xb0000000 0x00 0x400000>;
+ 			record-size = <0x40000>;
+ 			console-size = <0x200000>;
+-			ecc-size = <0x00>;
++			ecc-size = <16>;
+ 			no-map;
+ 		};
+ 	};

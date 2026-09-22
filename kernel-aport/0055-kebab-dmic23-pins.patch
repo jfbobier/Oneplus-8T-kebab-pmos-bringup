@@ -1,0 +1,40 @@
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts	2026-09-16 16:37:46.525753534 +0200
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts	2026-09-16 16:37:46.534870527 +0200
+@@ -1797,7 +1797,7 @@
+  */
+ &vamacro {
+ 	pinctrl-names = "default";
+-	pinctrl-0 = <&dmic01_active>;
++	pinctrl-0 = <&dmic01_active>, <&dmic23_active>;
+ 	vdd-micb-supply = <&vreg_s4a_1p8>;
+ 	/*
+ 	 * 2.4 MHz, not Apollo's 600 kHz.  The driver derives the divider as
+@@ -1811,3 +1811,28 @@
+ 	 */
+ 	qcom,dmic-sample-rate = <2400000>;
+ };
++
++/*
++ * kebab is a 3-mic phone, so the DMIC2/DMIC3 pair needs its pins muxed too.
++ * Mainline sm8250.dtsi only defines dmic01-active-state, so this mirrors it for
++ * gpio8 / gpio9.  Per pinctrl-sm8250-lpass-lpi.c: dmic2_clk is gpio8 and
++ * dmic2_data is gpio9; their only alternate function is i2s1_data, which
++ * nothing on this board uses (the TFA amps are on tertiary MI2S, TLMM
++ * gpio133-137, not LPI), so there is no mux conflict.
++ */
++&lpass_tlmm {
++	dmic23_active: dmic23-active-state {
++		clk-pins {
++			pins = "gpio8";
++			function = "dmic2_clk";
++			drive-strength = <8>;
++			output-high;
++		};
++
++		data-pins {
++			pins = "gpio9";
++			function = "dmic2_data";
++			drive-strength = <8>;
++		};
++	};
++};

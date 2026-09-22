@@ -1,0 +1,54 @@
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
+@@ -903,3 +903,51 @@
+ 		output-high;
+ 	};
+ };
++
++/*
++ * Touchscreen.
++ *
++ * The node inherited from the OnePlus 8 Pro declares a Samsung s6sy761 at
++ * 0x48. The 8T actually has a Synaptics S3908 at 0x4b on the same bus, so
++ * the old node is deleted rather than left to create a phantom client.
++ *
++ * Caleb's version references ts_irq_active and ts_rst_active, which live in
++ * his common dtsi. This tree has ts_int_active covering gpio38 and gpio39,
++ * which is enough: the mux is already "gpio" and reset is driven via gpiod.
++ */
++
++&i2c13 {
++	/delete-node/ touchscreen@48;
++
++	touchscreen@4b {
++		compatible = "syna,s3908";
++		reg = <0x4b>;
++
++		interrupt-parent = <&tlmm>;
++		interrupts = <39 0x2008>;
++
++		reset-gpios = <&tlmm 38 GPIO_ACTIVE_HIGH>;
++
++		pinctrl-names = "default";
++		pinctrl-0 = <&ts_int_active>;
++
++		vdd-supply = <&vreg_l13a_ts_3p0>;
++		vcc-supply = <&vreg_l1c_1p8>;
++		vdd_volt = <3008000>;
++
++		max-objects = <10>;
++	};
++};
++
++/* Adreno 650. Without this, msm_dpu reports "no GPU device was found"
++ * and GNOME falls back to llvmpipe. */
++&gpu {
++	status = "okay";
++};
++
++/* Real DSI output works now, so hand the framebuffer over to msm. Leaving
++ * simple-framebuffer enabled produces the "framebuffer is not in virtual
++ * address space" warnings as both drivers claim 0x9c000000. */
++&framebuffer0 {
++	status = "disabled";
++};

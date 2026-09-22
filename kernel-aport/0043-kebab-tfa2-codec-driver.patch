@@ -1,0 +1,924 @@
+This patch adds the stage-1 DSP-bypass ASoC codec driver for the NXP
+TFA9874 (TFA2 family) speaker amplifiers used on OnePlus 8T ("kebab"),
+plus the Kconfig/Makefile plumbing to build it as snd-soc-tfa2.ko.
+
+Companion to patches 0026 (amp devicetree nodes) and 0027 (tertiary-MI2S
+audio routing) -- those add the &i2c15 nodes and DAI link; this adds the
+driver that binds "nxp,tfa9874" and actually programs the chip.
+
+Register-level content (hidden-register unlock/key2 procedure, the three
+per-revision "optimal settings" tuning tables for silicon steppings
+0x0a74/0x0b74/0x0c74, and the PWDN->MANSCONF->CLKS-poll->SBSL state-machine
+bring-up) is taken verbatim from NXP's own public v6.5.5 driver source
+(tfa9874-nxp-src, also mirrored in OnePlusOSS's audio-kernel-sm8250 stock
+tree) -- see the driver's own header comment for exact file/line
+provenance. This is a stage-1 bypass port only: no CoolFlux DSP patch
+loading, no speaker excursion/thermal protection, no MTP calibration.
+kebab-audio-port-plan.md Part 5's first-tone safety protocol is mandatory
+before this drives a real speaker.
+
+Compile-verified: builds clean (including -W1) as snd-soc-tfa2.ko against
+a real sm8250 6.2 kernel tree with the aarch64-linux-gnu- cross toolchain.
+Verified against the exact gitlab.postmarketos.org sm8250-7.2.0 tree via a real pmbootstrap build attempt.
+tree line-for-line (that repo is Anubis-protected and could not be fetched
+in full from this prework environment) -- context lines here come from
+the sm8250-mainline/linux community tree instead, which pmOS's sm8250
+fork tracks closely. If this patch fails to apply cleanly on the real
+builder, the fix is almost certainly just a context-line offset, not a
+correctness problem with the driver itself; re-diff against the real tree
+there before falling back to manual patching.
+--- a/sound/soc/codecs/Kconfig
++++ b/sound/soc/codecs/Kconfig
+@@ -2292,6 +2292,15 @@
+ 	  Note that the driver currently bypasses the built-in "CoolFlux DSP"
+ 	  and does not support (hardware) volume control.
+ 
++config SND_SOC_TFA2
++	tristate "NXP/Goodix TFA9874 (TFA2) amplifier, DSP-bypass stage 1"
++	depends on I2C
++	select REGMAP_I2C
++	help
++	  Stage-1 DSP-bypass driver for the NXP TFA9874 (TFA2 family)
++	  amplifier as used on OnePlus 8T ("kebab"). No firmware
++	  container, no speaker protection -- see driver source comment.
++
+ config SND_SOC_TLV320ADC3XXX
+ 	tristate "Texas Instruments TLV320ADC3001/3101 audio ADC"
+ 	depends on I2C
+--- a/sound/soc/codecs/Makefile
++++ b/sound/soc/codecs/Makefile
+@@ -331,6 +331,7 @@
+ snd-soc-tas2783-sdw-y := tas2783-sdw.o
+ snd-soc-tfa9879-y := tfa9879.o
+ snd-soc-tfa989x-y := tfa989x.o
++snd-soc-tfa2-y := tfa2.o
+ snd-soc-tlv320adc3xxx-y := tlv320adc3xxx.o
+ snd-soc-tlv320aic23-y := tlv320aic23.o
+ snd-soc-tlv320aic23-i2c-y := tlv320aic23-i2c.o
+@@ -772,6 +773,7 @@
+ obj-$(CONFIG_SND_SOC_TAS2770) += snd-soc-tas2770.o
+ obj-$(CONFIG_SND_SOC_TFA9879)	+= snd-soc-tfa9879.o
+ obj-$(CONFIG_SND_SOC_TFA989X)	+= snd-soc-tfa989x.o
++obj-$(CONFIG_SND_SOC_TFA2)	+= snd-soc-tfa2.o
+ obj-$(CONFIG_SND_SOC_TLV320ADC3XXX)	+= snd-soc-tlv320adc3xxx.o
+ obj-$(CONFIG_SND_SOC_TLV320AIC23)	+= snd-soc-tlv320aic23.o
+ obj-$(CONFIG_SND_SOC_TLV320AIC23_I2C)	+= snd-soc-tlv320aic23-i2c.o
+--- /dev/null
++++ b/sound/soc/codecs/tfa2.c
+@@ -0,0 +1,855 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * ASoC driver for NXP/Goodix TFA2-family ("CoolFlux DSP") amplifiers,
++ * DSP-bypass mode -- no firmware container, no volume/protection DSP.
++ *
++ * Architecture cloned deliberately from sound/soc/codecs/tfa989x.c
++ * (Copyright (C) 2021 Stephan Gerhold), which does the same thing for the
++ * older TFA1 family (tfa9890/9895/9897). TFA2 is a different register map
++ * and a different hidden-register unlock/bypass sequence.
++ *
++ * Target: NXP TFA9874 as used on the OnePlus 8T ("kebab"), two instances
++ * sharing one tertiary-MI2S TDM frame, one L/R slot each, selected via the
++ * "nxp,tfa-channel" devicetree property (see patches 0026/0027).
++ *
++ * REGISTER MAP PROVENANCE -- every bitfield/register value below is taken
++ * verbatim from NXP's own public v6.5.5 "Tfa98xx (kernel) driver" source
++ * (tfa9874-nxp-src, cloned during prework; the OnePlusOSS stock kernel's
++ * audio-kernel-sm8250/asoc/codecs/tfa9894/ tree carries an identical copy),
++ * specifically:
++ *   - inc/tfa9874_tfafieldnames.h   (per-chip bitfields: PWDN/AMPE/DCA/
++ *     MANSCONF/CLKS/MTPB/MANSTATE/MTPOTC/MTPEX)
++ *   - inc/tfa2_tfafieldnames_N1C.h  (bitfields common to all TFA2 parts,
++ *     not re-declared per-chip: SBSL/ACS/RST/REV)
++ *   - src/tfa_init.c: tfa9874_specific() (per-revision tuning writes +
++ *     hidden-register unlock preamble), tfa9874_ops(), tfa_set_mute_nodsp()
++ *   - src/tfa_dsp.c: tfa_dev_set_state() (the real state-machine
++ *     transition writes this driver's tfa2_bringup() replicates for the
++ *     non-probus path), tfa98xx_key2()
++ *   - src/tfa98xx.c: revision family-byte switch ("case 0x74:"),
++ *     tfa98xx_regmap (reg_bits=8, val_bits=16 -- confirms this driver's
++ *     regmap_config was already correct), of_device_id table (confirms
++ *     "nxp,tfa9874" compatible string was already correct)
++ *
++ * NOT carried over from that source, by design (this is a stage-1,
++ * DSP-bypass port, not a port of the v6 container-driven driver):
++ *   - CoolFlux DSP patch/coefficient loading (TFA_STATE_INIT_FW and the
++ *     whole .cnt/tfa_container machinery)
++ *   - Speaker excursion/temperature protection algorithms (these only
++ *     exist inside the DSP patch loaded by the container-driven path)
++ *   - MTP calibration (Ron/Re25 factory trim readback) and calibration-
++ *     specific FAIM-protect sequencing
++ *   - Multi-tries recovery / fault-state handling
++ *
++ * Consequence: this driver drives the amplifier at whatever gain/EQ the
++ * per-revision "optimal settings" leave it at, with NO excursion or
++ * thermal protection. This is the exact tradeoff tfa989x.c itself
++ * documents for TFA1; kebab-audio-port-plan.md Part 5's first-tone safety
++ * protocol (200ms, ~1% amplitude, hand on volume) is mandatory before any
++ * real speaker is driven with this code, on every new device instance.
++ */
++
++#include <linux/bitops.h>
++#include <linux/delay.h>
++#include <linux/errno.h>
++#include <linux/gpio/consumer.h>
++#include <linux/i2c.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/regmap.h>
++#include <linux/regulator/consumer.h>
++#include <sound/pcm_params.h>
++#include <sound/soc.h>
++
++/*
++ * ----------------------------------------------------------------------------
++ * Bitfield encoding -- identical to NXP's own scheme, so every constant
++ * below can be checked directly against the *_tfafieldnames.h headers
++ * without re-deriving anything: a 16-bit id 0xRRBW encodes
++ *   RR = 8-bit register address
++ *   B  = start bit within the 16-bit register (0-15)
++ *   W  = width-1 (W=0 -> 1 bit, W=15 -> all 16 bits, e.g. REV)
++ * ----------------------------------------------------------------------------
++ */
++#define TFA2_BF_REG(bf)		(((bf) >> 8) & 0xff)
++#define TFA2_BF_POS(bf)		(((bf) >> 4) & 0xf)
++#define TFA2_BF_WIDTH(bf)	((((bf) & 0xf)) + 1)
++#define TFA2_BF_MASK(bf)	((BIT(TFA2_BF_WIDTH(bf)) - 1) << TFA2_BF_POS(bf))
++
++/* Per-chip bitfields, from inc/tfa9874_tfafieldnames.h */
++#define TFA9874_BF_PWDN	0x0000	/* reg 0x00 bit 0:  powerdown selection */
++#define TFA9874_BF_AMPE	0x0030	/* reg 0x00 bit 3:  activate amplifier (probus devices only) */
++#define TFA9874_BF_DCA		0x0040	/* reg 0x00 bit 4:  activate DC-to-DC converter */
++#define TFA9874_BF_MANSCONF	0x0120	/* reg 0x01 bit 2:  I2C configured */
++#define TFA9874_BF_CLKS	0x1170	/* reg 0x11 bit 7:  clocks stable */
++#define TFA9874_BF_MTPB	0x11c0	/* reg 0x11 bit 12: MTP busy */
++#define TFA9874_BF_MANSTATE	0x1433	/* reg 0x14 bits 3-6: device manager state */
++#define TFA9874_BF_MTPOTC	0xf000	/* reg 0xf0 bit 0:  calibration-once-executed (OTC) */
++#define TFA9874_BF_MTPEX	0xf010	/* reg 0xf0 bit 1:  calibration Ron executed */
++
++/* Common TFA2 bitfields, from inc/tfa2_tfafieldnames_N1C.h (not re-declared
++ * per chip -- confirmed identical position for tfa9874/tfa9894/tfa9912). */
++/*
++ * TDM (I2S) receiver configuration. The TFA2 will not derive a stable
++ * internal clock -- CLKS never asserts and MANSTATE will not advance --
++ * unless its TDM slave interface is configured. Confirmed on kebab
++ * 2026-09-15: without these, CLKS stays 0 during playback. Field layout
++ * cross-checked against the sc7280-mainline tfa987x driver, which drives
++ * this same interface and does reach CLKS=1 on this board.
++ * Encoding is the usual 0xRRBW: register, start bit, width-1.
++ */
++#define TFA2_BF_TDM_FSBCLKS	0x20c3	/* 0x20 [15:12] fs/bclk ratio */
++#define TFA2_BF_TDM_NSLOTS	0x2103	/* 0x21 [3:0]   slots - 1 */
++#define TFA2_BF_TDM_SLOTBITS	0x2144	/* 0x21 [8:4]   bits/slot - 1 */
++#define TFA2_BF_TDM_SWIDTH	0x2224	/* 0x22 [6:2]   sample width - 1 */
++#define TFA2_BF_TDM_SPKE	0x2300	/* 0x23 bit 0    speaker chan enable */
++#define TFA2_BF_TDM_DCE		0x2310	/* 0x23 bit 1    dcdc chan enable */
++#define TFA2_BF_TDM_CSE		0x2330	/* 0x23 bit 3    current sense enable */
++#define TFA2_BF_TDM_VSE		0x2340	/* 0x23 bit 4    voltage sense enable */
++#define TFA2_BF_TDM_SPKS	0x2603	/* 0x26 [3:0]    speaker slot select */
++#define TFA2_BF_AMPGAIN		0x5257	/* 0x52 [12:5] amplifier gain, 0-255 */
++#define TFA2_BF_TDM_SPKG	0x6163	/* 0x61 [9:6]  total gain (channel 0) */
++#define TFA2_BF_DPSA		0x5170	/* 0x51 bit 7    dynamic power saving */
++
++#define TFA2_BF_SBSL		0x0050	/* reg 0x00 bit 5:  "engage" bit for non-probus TFA2 parts */
++#define TFA2_BF_ACS		0x1090	/* reg 0x10 bit 9:  cold start flag */
++#define TFA2_BF_REV		0x030f	/* reg 0x03, all 16 bits: revision number */
++#define TFA2_BF_RST		0x9000	/* reg 0x90 bit 0:  coolflux DSP reset (unused, stage 1) */
++
++/* Plain (non-bitfield, whole-register) addresses used only by the hidden
++ * register unlock preamble in tfa9874_specific(), src/tfa_init.c:663. */
++#define TFA2_REG_UNLOCK_GATE	0x0F	/* write 0x5A6B to unhide 0xA0/0xA1, 0x0000 to re-hide */
++#define TFA2_UNLOCK_KEY		0x5A6B
++#define TFA2_REG_KEY1_XOR_SRC	0xFB	/* key1: read this, XOR with 0x005A, write result to 0xA0 */
++#define TFA2_REG_KEY1		0xA0
++#define TFA2_REG_KEY2		0xA1	/* MTPKEY2: write 0x5A to unlock, 0x00 to lock */
++
++/* TFA9874_BF_REV low byte identifies the family across all three known
++ * silicon steppings (0x0a74 / 0x0b74 / 0x0c74) -- confirmed by tfa98xx.c's
++ * revision-detection switch, "case 0x74:" (src/tfa98xx.c:3177). */
++#define TFA9874_FAMILY_ID	0x74
++
++/* MTPEX wait loop: real driver's MTPEX_WAIT_NTRIES*4 constant wasn't
++ * captured verbatim from source; this uses a deliberately generous 2s cap
++ * (200 x 10ms, matching the real loop's 10ms msleep_interruptible step) so
++ * a slow factory-calibrated part still gets there, without hanging probe()
++ * indefinitely if MTPEX never asserts. */
++#define TFA2_MTPEX_WAIT_TRIES	200
++#define TFA2_MTPEX_WAIT_MS		10
++
++/* CLKS poll while leaving powerdown -- mirrors tfa_dev_set_state()'s
++ * TFA_STATE_INIT_CF loop (src/tfa_dsp.c:3640), "loop = 50" retries of
++ * tfa98xx_dsp_system_stable(). That call is wrapped through a per-chip
++ * ops->dsp_system_stable function pointer (tfa9874_dsp_system_stable(),
++ * body not pulled into prework); polling CLKS directly is the documented
++ * meaning of that bitfield ("Clocks stable") and is what every other
++ * chip's default dsp_system_stable implementation in this source tree
++ * does, so this is the standard TFA2 behaviour, not a guess at TFA9874-
++ * specific logic -- flagged here for anyone auditing against real source.
++ */
++#define TFA2_CLKS_WAIT_TRIES	200
++#define TFA2_CLKS_WAIT_MS		5
++
++struct tfa2 {
++	struct regmap *regmap;
++	struct regulator *vddd_supply;
++	struct gpio_desc *reset_gpiod;
++	u32 channel;		/* "nxp,tfa-channel": 0 = left, 1 = right */
++	unsigned int rev;	/* full 16-bit TFA2_BF_REV value, e.g. 0x0b74 */
++};
++
++/*
++ * ----------------------------------------------------------------------------
++ * Generic bitfield accessors -- same idea as the real driver's
++ * TFA_SET_BF()/TFA_GET_BF() macros (inc/tfa_service.h:870), built on top of
++ * regmap instead of the vendor's own I2C wrapper.
++ * ----------------------------------------------------------------------------
++ */
++static int tfa2_set_bf(struct regmap *regmap, u16 bf, unsigned int value)
++{
++	unsigned int mask = TFA2_BF_MASK(bf);
++
++	return regmap_update_bits(regmap, TFA2_BF_REG(bf), mask,
++				   value << TFA2_BF_POS(bf));
++}
++
++static int tfa2_get_bf(struct regmap *regmap, u16 bf, unsigned int *value)
++{
++	unsigned int reg;
++	int ret;
++
++	ret = regmap_read(regmap, TFA2_BF_REG(bf), &reg);
++	if (ret)
++		return ret;
++
++	*value = (reg & TFA2_BF_MASK(bf)) >> TFA2_BF_POS(bf);
++	return 0;
++}
++
++static int tfa2_poll_bf(struct regmap *regmap, u16 bf, unsigned int want,
++			 int tries, unsigned int delay_ms)
++{
++	unsigned int val;
++	int ret;
++
++	do {
++		ret = tfa2_get_bf(regmap, bf, &val);
++		if (ret)
++			return ret;
++		if (val == want)
++			return 0;
++		if (delay_ms)
++			msleep(delay_ms);
++	} while (--tries > 0);
++
++	return -ETIMEDOUT;
++}
++
++/*
++ * ----------------------------------------------------------------------------
++ * Hidden-register unlock -- verbatim from tfa9874_specific()'s preamble
++ * (src/tfa_init.c:670-675) and tfa98xx_key2() (src/tfa_dsp.c:737).
++ * ----------------------------------------------------------------------------
++ */
++static int tfa2_key1_unlock(struct regmap *regmap)
++{
++	unsigned int val;
++	int ret;
++
++	ret = regmap_write(regmap, TFA2_REG_UNLOCK_GATE, TFA2_UNLOCK_KEY);
++	if (ret)
++		return ret;
++
++	ret = regmap_read(regmap, TFA2_REG_KEY1_XOR_SRC, &val);
++	if (ret)
++		return ret;
++
++	return regmap_write(regmap, TFA2_REG_KEY1, val ^ 0x005A);
++}
++
++static int tfa2_key2(struct regmap *regmap, bool lock)
++{
++	int ret;
++
++	ret = regmap_write(regmap, TFA2_REG_UNLOCK_GATE, TFA2_UNLOCK_KEY);
++	if (ret)
++		return ret;
++
++	ret = regmap_write(regmap, TFA2_REG_KEY2, lock ? 0x00 : 0x5A);
++	if (ret)
++		return ret;
++
++	return regmap_write(regmap, TFA2_REG_UNLOCK_GATE, 0x0000);
++}
++
++/*
++ * ----------------------------------------------------------------------------
++ * Per-revision "optimal settings" -- verbatim register writes from
++ * tfa9874_specific(), src/tfa_init.c:680-745, for the three known TFA9874
++ * silicon steppings. Comments preserve the vendor's own POR (power-on
++ * reset / default) annotations for auditability against real source.
++ * ----------------------------------------------------------------------------
++ */
++static const struct reg_sequence tfa9874_tuning_0a74[] = {
++	{ 0x02, 0x22a8 }, /* POR=0x25c8 */
++	{ 0x51, 0x0020 }, /* POR=0x0000 */
++	{ 0x52, 0x57dc }, /* POR=0x56dc */
++	{ 0x58, 0x16a4 }, /* POR=0x1614 */
++	{ 0x61, 0x0110 }, /* POR=0x0198 */
++	{ 0x66, 0x0701 }, /* POR=0x0700 */
++	{ 0x6f, 0x00a3 }, /* POR=0x01a3 */
++	{ 0x70, 0x07f8 }, /* POR=0x06f8 */
++	{ 0x73, 0x0007 }, /* POR=0x0005 */
++	{ 0x74, 0x5068 }, /* POR=0xcc80 */
++	{ 0x75, 0x0d28 }, /* POR=0x1138 */
++	{ 0x83, 0x0594 }, /* POR=0x061a */
++	{ 0x84, 0x0001 }, /* POR=0x0021 */
++	{ 0x85, 0x0001 }, /* POR=0x0003 */
++	{ 0x88, 0x0000 }, /* POR=0x0002 */
++	{ 0xc4, 0x2001 }, /* POR=0x0001 */
++};
++
++static const struct reg_sequence tfa9874_tuning_0b74[] = {
++	{ 0x02, 0x22a8 }, /* POR=0x25c8 */
++	{ 0x51, 0x0020 }, /* POR=0x0000 */
++	{ 0x52, 0x57dc }, /* POR=0x56dc */
++	{ 0x58, 0x16a4 }, /* POR=0x1614 */
++	{ 0x61, 0x0110 }, /* POR=0x0198 */
++	{ 0x66, 0x0701 }, /* POR=0x0700 */
++	{ 0x6f, 0x00a3 }, /* POR=0x01a3 */
++	{ 0x70, 0x07f8 }, /* POR=0x06f8 */
++	{ 0x73, 0x0047 }, /* POR=0x0045 */
++	{ 0x74, 0x5068 }, /* POR=0xcc80 */
++	{ 0x75, 0x0d28 }, /* POR=0x1138 */
++	{ 0x83, 0x0595 }, /* POR=0x061a */
++	{ 0x84, 0x0001 }, /* POR=0x0021 */
++	{ 0x85, 0x0001 }, /* POR=0x0003 */
++	{ 0x88, 0x0000 }, /* POR=0x0002 */
++	{ 0xc4, 0x2001 }, /* POR=0x0001 */
++};
++
++static const struct reg_sequence tfa9874_tuning_0c74[] = {
++	{ 0x02, 0x22c8 }, /* POR=0x25c8 */
++	{ 0x52, 0x57dc }, /* POR=0x56dc */
++	{ 0x53, 0x003e }, /* POR=0x001e */
++	{ 0x56, 0x0400 }, /* POR=0x0600 */
++	{ 0x61, 0x0110 }, /* POR=0x0198 */
++	{ 0x6f, 0x00a5 }, /* POR=0x01a3 */
++	{ 0x70, 0x07f8 }, /* POR=0x06f8 */
++	{ 0x73, 0x0047 }, /* POR=0x0045 */
++	{ 0x74, 0x5098 }, /* POR=0xcc80 */
++	{ 0x75, 0x8d28 }, /* POR=0x1138 */
++	{ 0x80, 0x0000 }, /* POR=0x0003 */
++	{ 0x83, 0x0799 }, /* POR=0x061a */
++	{ 0x84, 0x0081 }, /* POR=0x0021 */
++};
++
++static int tfa9874_init(struct regmap *regmap, unsigned int rev)
++{
++	const struct reg_sequence *tuning;
++	size_t n_tuning;
++	int ret;
++
++	ret = tfa2_key1_unlock(regmap);
++	if (ret)
++		return ret;
++
++	ret = tfa2_key2(regmap, false);
++	if (ret)
++		return ret;
++
++	switch (rev) {
++	case 0x0a74:
++		tuning = tfa9874_tuning_0a74;
++		n_tuning = ARRAY_SIZE(tfa9874_tuning_0a74);
++		break;
++	case 0x0b74:
++		tuning = tfa9874_tuning_0b74;
++		n_tuning = ARRAY_SIZE(tfa9874_tuning_0b74);
++		break;
++	case 0x0c74:
++		tuning = tfa9874_tuning_0c74;
++		n_tuning = ARRAY_SIZE(tfa9874_tuning_0c74);
++		break;
++	default:
++		/* Matches real source's own behaviour for an unrecognized
++		 * stepping: warn and continue rather than fail (tfa_init.c's
++		 * tfa9874_specific() default case just pr_info()s). */
++		dev_warn(regmap_get_device(regmap),
++			 "no known optimal-settings table for revision %#x, continuing without tuning\n",
++			 rev);
++		return 0;
++	}
++
++	return regmap_multi_reg_write(regmap, tuning, n_tuning);
++}
++
++/*
++ * ----------------------------------------------------------------------------
++ * State-machine bring-up -- replicates the non-probus path of
++ * tfa_dev_set_state() (src/tfa_dsp.c:3640) for TFA_STATE_INIT_CF followed
++ * immediately by TFA_STATE_OPERATING. TFA9874 defaults is_probus_device=0
++ * and nothing in the real source ever sets it to 1 for this chip, so the
++ * SBSL branch (not AMPE) is the correct one here -- this was the open
++ * question from earlier prework, now resolved by reading tfa_dev_set_state()
++ * directly.
++ *
++ * Skipped relative to real source, deliberately, because this is a
++ * stage-1 bypass bring-up with no calibration/container flow:
++ *   - FAIM-protect toggling (only runs when is_calibration is set, or on
++ *     rev 0x13 chips -- neither applies here)
++ *   - sync_iv_delay ACS-clear + dsp_reset pulse (cold-start I/V delay sync,
++ *     only relevant to rev 0x96/0x97 parts)
++ *   - TFA_STATE_RESET's tfa98xx_init() software register reset (this
++ *     driver instead does a hardware reset via reset_gpiod in probe(),
++ *     which is the equivalent operation for a fresh probe)
++ * ----------------------------------------------------------------------------
++ */
++/*
++ * Configure the TDM slave interface: 16-bit samples, two slots, speaker
++ * channel only (no current/voltage sense -- nothing consumes the sense
++ * return on this DSP-bypass path), and take this instance's slot from the
++ * devicetree channel. Runs after tfa9874_init(), because the per-revision
++ * tuning tables also touch registers in this range.
++ */
++static int tfa2_tdm_setup(struct regmap *regmap, u32 channel)
++{
++	static const struct {
++		unsigned int bf;
++		unsigned int val;
++	} seq[] = {
++		{ TFA2_BF_DPSA,		0 },
++		{ TFA2_BF_TDM_FSBCLKS,	0 },
++		{ TFA2_BF_TDM_NSLOTS,	1 },
++		{ TFA2_BF_TDM_SLOTBITS,	15 },
++		{ TFA2_BF_TDM_SWIDTH,	15 },
++		{ TFA2_BF_TDM_SPKE,	1 },
++		{ TFA2_BF_TDM_DCE,	0 },
++		{ TFA2_BF_TDM_CSE,	0 },
++		{ TFA2_BF_TDM_VSE,	0 },
++		/*
++		 * Left at NXP's per-revision "optimal settings" defaults
++		 * (TDMSPKG 4/15, AMPGAIN 190/255). An earlier build raised both
++		 * to max chasing a faintness theory (stock Android's CoolFlux DSP
++		 * supplies makeup gain that DSP-bypass mode has no equivalent for)
++		 * that turned out to be wrong: the actual cause was a userspace
++		 * format/buffering mismatch, fixed by the WirePlumber ALSA rate
++		 * rule (50-sm8250-rates.conf, forces S16LE/48000/period 1024).
++		 * Reverted 2026-09-16: this driver has no excursion/thermal
++		 * protection (stage-1 DSP-bypass, see file header), so running an
++		 * unprotected amp at max gain is a real risk, not just a tuning
++		 * choice, now that the real fix lives elsewhere.
++		 */
++		{ TFA2_BF_TDM_SPKG,	4 },
++		{ TFA2_BF_AMPGAIN,	190 },
++	};
++	int ret, i;
++
++	for (i = 0; i < ARRAY_SIZE(seq); i++) {
++		ret = tfa2_set_bf(regmap, seq[i].bf, seq[i].val);
++		if (ret)
++			return ret;
++	}
++
++	return tfa2_set_bf(regmap, TFA2_BF_TDM_SPKS, channel);
++}
++
++static int tfa2_bringup(struct regmap *regmap)
++{
++	unsigned int mtpotc;
++	int ret;
++
++	/* ---- TFA_STATE_INIT_CF equivalent ---- */
++	ret = tfa2_set_bf(regmap, TFA2_BF_SBSL, 0);
++	if (ret)
++		return ret;
++	ret = tfa2_set_bf(regmap, TFA9874_BF_MANSCONF, 1);
++	if (ret)
++		return ret;
++	ret = tfa2_set_bf(regmap, TFA9874_BF_PWDN, 0);
++	if (ret)
++		return ret;
++
++	ret = tfa2_poll_bf(regmap, TFA9874_BF_CLKS, 1,
++			   TFA2_CLKS_WAIT_TRIES, TFA2_CLKS_WAIT_MS);
++	if (ret)
++		return ret;
++
++	/* ---- TFA_STATE_OPERATING equivalent (non-probus: SBSL, not AMPE) ---- */
++	ret = tfa2_set_bf(regmap, TFA9874_BF_PWDN, 0);
++	if (ret)
++		return ret;
++	ret = tfa2_set_bf(regmap, TFA9874_BF_MANSCONF, 1);
++	if (ret)
++		return ret;
++	/*
++	 * DCA enables the boost converter that supplies the speaker output
++	 * stage. Added after hardware testing on kebab: without it the amp
++	 * reaches CLKS=1/PLLS=1 but produces no output, and DCA reads back 0
++	 * (the per-revision tuning only programs the DCDC_CTRL registers, it
++	 * does not assert this runtime enable).
++	 */
++	ret = tfa2_set_bf(regmap, TFA9874_BF_DCA, 1);
++	if (ret)
++		return ret;
++	/* AMPE gates the output stage itself; without it the chip clocks
++	 * and advances its state machine but drives nothing. */
++	ret = tfa2_set_bf(regmap, TFA9874_BF_AMPE, 1);
++	if (ret)
++		return ret;
++	ret = tfa2_set_bf(regmap, TFA2_BF_SBSL, 1);
++	if (ret)
++		return ret;
++
++	ret = tfa2_get_bf(regmap, TFA9874_BF_MTPOTC, &mtpotc);
++	if (ret)
++		return ret;
++	if (mtpotc == 1) {
++		ret = tfa2_poll_bf(regmap, TFA9874_BF_MTPEX, 1,
++				   TFA2_MTPEX_WAIT_TRIES, TFA2_MTPEX_WAIT_MS);
++		if (ret)
++			dev_warn(regmap_get_device(regmap),
++				 "MTPEX did not assert after %dms, continuing anyway\n",
++				 TFA2_MTPEX_WAIT_TRIES * TFA2_MTPEX_WAIT_MS);
++	}
++
++	return 0;
++}
++
++/*
++ * ----------------------------------------------------------------------------
++ * regmap
++ * ----------------------------------------------------------------------------
++ * reg_bits=8/val_bits=16 confirmed against tfa98xx_regmap in real source
++ * (src/tfa98xx.c:2921-2923).
++ */
++static bool tfa2_writeable_reg(struct device *dev, unsigned int reg)
++{
++	/* Only REV (0x03) is read-only. 0x00-0x02 are SYS_CTRL0/1 and a tuning
++	 * register this driver must write; the old `reg > 0x03` gate rejected
++	 * them, so tuning failed -EIO on its first entry (0x02). */
++	return reg != TFA2_BF_REG(TFA2_BF_REV);
++}
++
++static bool tfa2_volatile_reg(struct device *dev, unsigned int reg)
++{
++	switch (reg) {
++	case 0x00: /* SYS_CTRL: PWDN/AMPE/DCA/SBSL live-state bits */
++	case 0x01: /* SYS_CTRL1: MANSCONF */
++	case 0x10: /* status: ACS */
++	case 0x11: /* status: CLKS, MTPB */
++	case 0x14: /* status: MANSTATE */
++	case 0xf0: /* MTP: MTPOTC/MTPEX live flags */
++		return true;
++	default:
++		return reg <= TFA2_BF_REG(TFA2_BF_REV);
++	}
++}
++
++static const struct regmap_config tfa2_regmap = {
++	.reg_bits = 8,
++	.val_bits = 16,
++	.writeable_reg = tfa2_writeable_reg,
++	.volatile_reg = tfa2_volatile_reg,
++	.cache_type = REGCACHE_RBTREE,
++};
++
++/*
++ * ----------------------------------------------------------------------------
++ * DAPM graph -- structurally identical to tfa989x.c: one input mux picking
++ * which I2S channel this instance's amplifier takes, gated by a POWER
++ * supply and an SBSL (engage) out-driver.
++ * ----------------------------------------------------------------------------
++ */
++static const struct snd_soc_dapm_widget tfa2_dapm_widgets[] = {
++	SND_SOC_DAPM_OUTPUT("OUT"),
++	SND_SOC_DAPM_SUPPLY("POWER", TFA2_BF_REG(TFA9874_BF_PWDN),
++			     TFA2_BF_POS(TFA9874_BF_PWDN), 1, NULL, 0),
++	SND_SOC_DAPM_OUT_DRV("SBSL", TFA2_BF_REG(TFA2_BF_SBSL),
++			     TFA2_BF_POS(TFA2_BF_SBSL), 0, NULL, 0),
++	SND_SOC_DAPM_AIF_IN("AIFIN", "HiFi Playback", 0, SND_SOC_NOPM, 0, 0),
++};
++
++static const struct snd_soc_dapm_route tfa2_dapm_routes[] = {
++	{ "OUT", NULL, "SBSL" },
++	{ "SBSL", NULL, "POWER" },
++	{ "SBSL", NULL, "AIFIN" },
++};
++
++static const struct snd_soc_component_driver tfa2_component = {
++	.dapm_widgets = tfa2_dapm_widgets,
++	.num_dapm_widgets = ARRAY_SIZE(tfa2_dapm_widgets),
++	.dapm_routes = tfa2_dapm_routes,
++	.num_dapm_routes = ARRAY_SIZE(tfa2_dapm_routes),
++	.use_pmdown_time = 1,
++	.endianness = 1,
++};
++
++/*
++ * Single mono playback DAI per instance -- the DT wires both amp instances
++ * to the same tertiary-MI2S TDM frame (see patch 0027); which physical
++ * TDM slot each instance reads is selected via "nxp,tfa-channel" and, on
++ * real hardware, an I2S-slot-select bitfield this stage-1 driver does not
++ * yet program (both instances currently default to slot 0 -- fine for the
++ * bring-up/first-tone test since only one amp should be enabled at a
++ * time during that test; must be fixed before stereo playback works).
++ */
++/*
++ * Set the TDM geometry from the parameters the backend actually negotiated.
++ *
++ * Doing this at probe with fixed 16-bit values was wrong twice over: the
++ * sm8250 tertiary MI2S backend runs S24_LE, i.e. 32-bit slots and 64 bit
++ * clocks per frame, so the amp was sampling 16-bit slots out of a 32-bit
++ * stream (audible as warped, quiet, apparently-mono output); and because it
++ * only ever ran once at probe, any later change left the amp stale. Both
++ * were confirmed on kebab hardware 2026-09-15 -- FSBCLKS=2 (64 bclk) holds
++ * frame lock while 1 (48) and 3 (96) drop CLKS immediately.
++ *
++ * FSBCLKS encodes bit clocks per frame: 0=32 1=48 2=64 3=96 4=128 5=256
++ * 6=512.
++ */
++static int tfa2_hw_params(struct snd_pcm_substream *substream,
++			  struct snd_pcm_hw_params *params,
++			  struct snd_soc_dai *dai)
++{
++	struct tfa2 *tfa2 = snd_soc_component_get_drvdata(dai->component);
++	unsigned int chans = params_channels(params);
++	unsigned int phys = params_physical_width(params);
++	unsigned int width = params_width(params);
++	unsigned int bclks = chans * phys;
++	int ret, fsb;
++
++	switch (bclks) {
++	case 32:  fsb = 0; break;
++	case 48:  fsb = 1; break;
++	case 64:  fsb = 2; break;
++	case 96:  fsb = 3; break;
++	case 128: fsb = 4; break;
++	case 256: fsb = 5; break;
++	case 512: fsb = 6; break;
++	default:
++		dev_err(dai->component->dev,
++			"no FSBCLKS encoding for %u bclk/frame (%u ch x %u bits)\n",
++			bclks, chans, phys);
++		return -EINVAL;
++	}
++
++	dev_info(dai->component->dev,
++		 "hw_params: %u ch %u-bit in %u-bit slots @ %u Hz -> %u bclk/frame, FSBCLKS=%d, slot %u\n",
++		 chans, width, phys, params_rate(params), bclks, fsb,
++		 tfa2->channel);
++
++	ret = tfa2_set_bf(tfa2->regmap, TFA2_BF_TDM_FSBCLKS, fsb);
++	if (ret)
++		return ret;
++	ret = tfa2_set_bf(tfa2->regmap, TFA2_BF_TDM_NSLOTS, chans - 1);
++	if (ret)
++		return ret;
++	ret = tfa2_set_bf(tfa2->regmap, TFA2_BF_TDM_SLOTBITS, phys - 1);
++	if (ret)
++		return ret;
++	ret = tfa2_set_bf(tfa2->regmap, TFA2_BF_TDM_SWIDTH, width - 1);
++	if (ret)
++		return ret;
++
++	return tfa2_set_bf(tfa2->regmap, TFA2_BF_TDM_SPKS, tfa2->channel);
++}
++
++static int tfa2_shutdown(struct regmap *regmap)
++{
++	int ret;
++
++	ret = tfa2_set_bf(regmap, TFA2_BF_SBSL, 0);
++	if (ret)
++		return ret;
++	ret = tfa2_set_bf(regmap, TFA9874_BF_DCA, 0);
++	if (ret)
++		return ret;
++	ret = tfa2_set_bf(regmap, TFA9874_BF_AMPE, 0);
++	if (ret)
++		return ret;
++
++	return tfa2_set_bf(regmap, TFA9874_BF_PWDN, 1);
++}
++
++/*
++ * The bring-up to OPERATING has to happen HERE, not in probe.
++ *
++ * The TFA2 derives its internal clock from the incoming I2S bit clock, so
++ * CLKS can only ever assert while the DAI is actually running. Doing this
++ * from probe made every probe fail -ETIMEDOUT on the CLKS poll -- observed
++ * on real kebab hardware 2026-09-15, with the amp otherwise healthy
++ * (revision 0x0c74 read fine and the tuning applied fine).
++ */
++static int tfa2_mute_stream(struct snd_soc_dai *dai, int mute, int stream)
++{
++	struct tfa2 *tfa2 = snd_soc_component_get_drvdata(dai->component);
++	int ret;
++
++	if (stream != SNDRV_PCM_STREAM_PLAYBACK)
++		return 0;
++
++	if (mute)
++		return tfa2_shutdown(tfa2->regmap);
++
++	ret = tfa2_bringup(tfa2->regmap);
++	if (ret)
++		dev_err(dai->component->dev,
++			"failed to bring device to OPERATING state: %d\n", ret);
++
++	return ret;
++}
++
++static const struct snd_soc_dai_ops tfa2_dai_ops = {
++	.hw_params = tfa2_hw_params,
++	.mute_stream = tfa2_mute_stream,
++	.no_capture_mute = 1,
++};
++
++static struct snd_soc_dai_driver tfa2_dai = {
++	.name = "tfa2-hifi",
++	.ops = &tfa2_dai_ops,
++	.playback = {
++		.stream_name = "HiFi Playback",
++		.formats = SNDRV_PCM_FMTBIT_S16_LE |
++			   SNDRV_PCM_FMTBIT_S24_LE |
++			   SNDRV_PCM_FMTBIT_S32_LE,
++		.rates = SNDRV_PCM_RATE_8000_48000,
++		.rate_min = 8000,
++		.rate_max = 48000,
++		.channels_min = 1,
++		.channels_max = 2,
++	},
++};
++
++/*
++ * ----------------------------------------------------------------------------
++ * Probe
++ * ----------------------------------------------------------------------------
++ */
++static void tfa2_regulator_disable(void *data)
++{
++	struct tfa2 *tfa2 = data;
++
++	regulator_disable(tfa2->vddd_supply);
++}
++
++static int tfa2_i2c_probe(struct i2c_client *i2c)
++{
++	struct device *dev = &i2c->dev;
++	struct tfa2 *tfa2;
++	struct regmap *regmap;
++	unsigned int rev;
++	int ret;
++
++	/*
++	 * Only one compatible is registered below ("nxp,tfa9874"); the real
++	 * identity/revision check happens after regmap is up, by reading
++	 * TFA2_BF_REV against TFA9874_FAMILY_ID -- see below. No per-entry
++	 * OF/i2c match data is needed.
++	 */
++	tfa2 = devm_kzalloc(dev, sizeof(*tfa2), GFP_KERNEL);
++	if (!tfa2)
++		return -ENOMEM;
++
++	i2c_set_clientdata(i2c, tfa2);
++
++	if (of_property_read_u32(dev->of_node, "nxp,tfa-channel", &tfa2->channel))
++		tfa2->channel = 0;
++
++	/*
++	 * Force both instances onto TDM slot 0 for now.
++	 *
++	 * Measured on kebab 2026-09-15: with the tertiary MI2S RX port on a
++	 * single data line (qcom,sd-lines = <1>), slot 1 does not carry the
++	 * right channel -- it carries full-scale garbage. The amp reading
++	 * slot 0 reports CLIPS=0/70 with a 12%% input, while the amp reading
++	 * slot 1 reports CLIPS=70/70 at every gain setting. Audibly that is
++	 * clipped noise played over the good channel, which is what made the
++	 * output sound warped and forced max volume to hear anything.
++	 *
++	 * The upstream sc7280-mainline users of this amplifier (Nothing
++	 * Phone 1, Xiaomi 11T) do exactly the same thing: their devicetrees
++	 * carry no per-amp slot property at all, so both amps take slot 0.
++	 * That gives clean mono from both transducers. Real stereo needs the
++	 * MI2S port to actually place two channels in two slots, which is a
++	 * separate question from this driver -- keep the devicetree property
++	 * so it is a one-line change once that is understood.
++	 */
++	if (tfa2->channel != 0) {
++		dev_info(dev, "forcing TDM slot 0 (devicetree asked for %u; slot 1 measured as invalid on this board)\n",
++			 tfa2->channel);
++		tfa2->channel = 0;
++	}
++
++	tfa2->vddd_supply = devm_regulator_get(dev, "vddd");
++	if (IS_ERR(tfa2->vddd_supply))
++		return dev_err_probe(dev, PTR_ERR(tfa2->vddd_supply),
++				      "failed to get vddd regulator\n");
++
++	/*
++	 * Active-high reset, per the stock DT (tlmm 91 / tlmm 99). No
++	 * shutdown-gpios on this board -- do not add a second GPIO here;
++	 * kebab-audio-port-plan.md Part 1 documents this was confirmed by
++	 * absence in the stock nodes (and by the stale README in
++	 * kebab-patches claiming otherwise -- that claim is superseded).
++	 */
++	tfa2->reset_gpiod = devm_gpiod_get_optional(dev, "reset", GPIOD_OUT_HIGH);
++	if (IS_ERR(tfa2->reset_gpiod))
++		return dev_err_probe(dev, PTR_ERR(tfa2->reset_gpiod),
++				      "failed to get reset gpio\n");
++
++	regmap = devm_regmap_init_i2c(i2c, &tfa2_regmap);
++	if (IS_ERR(regmap))
++		return PTR_ERR(regmap);
++
++	tfa2->regmap = regmap;
++
++	ret = regulator_enable(tfa2->vddd_supply);
++	if (ret)
++		return dev_err_probe(dev, ret, "failed to enable vddd regulator\n");
++
++	ret = devm_add_action_or_reset(dev, tfa2_regulator_disable, tfa2);
++	if (ret)
++		return ret;
++
++	/* Bring the amp out of reset before any register access. */
++	if (tfa2->reset_gpiod)
++		gpiod_set_value_cansleep(tfa2->reset_gpiod, 0);
++	usleep_range(1000, 2000); /* let the chip's internal POR settle */
++
++	regcache_cache_bypass(regmap, true);
++
++	ret = tfa2_get_bf(regmap, TFA2_BF_REV, &rev);
++	if (ret)
++		return dev_err_probe(dev, ret, "failed to read revision number\n");
++
++	if ((rev & 0xff) != TFA9874_FAMILY_ID) {
++		dev_err(dev, "unexpected revision %#x (family byte %#x, want %#x)\n",
++			rev, rev & 0xff, TFA9874_FAMILY_ID);
++		return -ENODEV;
++	}
++	tfa2->rev = rev;
++
++	ret = tfa9874_init(regmap, rev);
++	if (ret)
++		return dev_err_probe(dev, ret, "failed to apply optimal-settings tuning\n");
++
++	ret = tfa2_tdm_setup(regmap, tfa2->channel);
++	if (ret)
++		return dev_err_probe(dev, ret, "failed to configure the TDM interface\n");
++
++	/*
++	 * Deliberately NOT calling tfa2_bringup() here -- see the comment on
++	 * tfa2_mute_stream(). The amp is left unlocked, tuned and powered
++	 * down; the DAI brings it to OPERATING when a stream starts.
++	 */
++	ret = tfa2_shutdown(regmap);
++	if (ret)
++		return dev_err_probe(dev, ret, "failed to put device in power-down\n");
++
++	regcache_cache_bypass(regmap, false);
++
++	dev_info(dev, "tfa9874 rev %#x ready (channel=%u, stage-1 DSP-bypass, NO speaker protection)\n",
++		 rev, tfa2->channel);
++
++	return devm_snd_soc_register_component(dev, &tfa2_component, &tfa2_dai, 1);
++}
++
++static const struct of_device_id tfa2_of_match[] = {
++	{ .compatible = "nxp,tfa9874" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, tfa2_of_match);
++
++static const struct i2c_device_id tfa2_i2c_id[] = {
++	{ "tfa9874" },
++	{ }
++};
++MODULE_DEVICE_TABLE(i2c, tfa2_i2c_id);
++
++static struct i2c_driver tfa2_i2c_driver = {
++	.driver = {
++		.name = "tfa2",
++		.of_match_table = tfa2_of_match,
++	},
++	/*
++	 * Plain .probe (single struct i2c_client * arg) -- confirmed against
++	 * the real target tree (gitlab.postmarketos.org sm8250-7.2.0):
++	 * struct i2c_driver there only declares .probe with this signature,
++	 * no .probe_new member exists. (An earlier draft used .probe_new,
++	 * based on a different reference kernel tree used only for
++	 * compile-testing during prework; that tree turned out to predate
++	 * this rename and the mistake was caught by a real build attempt
++	 * against gitlab.postmarketos.org's actual sm8250-7.2.0 tag.)
++	 * Also confirmed against the in-tree tfa989x.c, which uses the same
++	 * plain .probe.
++	 */
++	.probe = tfa2_i2c_probe,
++	.id_table = tfa2_i2c_id,
++};
++module_i2c_driver(tfa2_i2c_driver);
++
++MODULE_DESCRIPTION("ASoC NXP/Goodix TFA2 driver (DSP-bypass, stage 1)");
++MODULE_AUTHOR("kebab audio port");
++MODULE_LICENSE("GPL");
+

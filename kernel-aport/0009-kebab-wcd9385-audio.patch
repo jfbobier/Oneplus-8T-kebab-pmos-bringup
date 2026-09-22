@@ -1,0 +1,157 @@
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
+@@ -9,6 +9,8 @@
+ #include "pm8150b.dtsi"
+ #include "pm8150l.dtsi"
+ #include "pm8009.dtsi"
++#include <dt-bindings/sound/qcom,q6afe.h>
++#include <dt-bindings/sound/qcom,q6asm.h>
+ 
+ /*
+  * Delete following upstream (sm8250.dtsi) reserved
+@@ -1141,3 +1143,145 @@
+ &i2c5 {
+ 	/delete-node/ charger@66;
+ };
++
++/*
++ * Audio: Qualcomm WCD9385 codec over SoundWire.
++ *
++ * Reset GPIO comes from the stock OxygenOS devicetree, where
++ * wcd938x_reset_active drives gpio32. Everything else follows
++ * sm8250-mtp.dts, which wires the near-identical WCD9380 the same way.
++ *
++ * NOT INCLUDED: the loudspeakers. This board has two NXP TFA9874
++ * amplifiers on i2c (0x34 and 0x35 on qupv3_se15). Mainline's tfa989x
++ * driver matches only nxp,tfa9890 / tfa9895 / tfa9897, so there is nothing
++ * to bind them to. Speaker support needs an out-of-tree driver port.
++ *
++ * The WSA macro is left disabled for the same reason -- it exists to drive
++ * SoundWire speakers, which this board does not have.
++ *
++ * Expected result: a card in /proc/asound, playback via the WCD
++ * headphone/earpiece path, and the analog microphones.
++ */
++
++/ {
++	wcd938x: audio-codec {
++		compatible = "qcom,wcd9385-codec";
++
++		reset-gpios = <&tlmm 32 GPIO_ACTIVE_LOW>;
++
++		vdd-buck-supply = <&vreg_s4a_1p8>;
++		vdd-rxtx-supply = <&vreg_s4a_1p8>;
++		vdd-io-supply = <&vreg_s4a_1p8>;
++		vdd-mic-bias-supply = <&vreg_bob>;
++
++		qcom,micbias1-microvolt = <1800000>;
++		qcom,micbias2-microvolt = <1800000>;
++		qcom,micbias3-microvolt = <1800000>;
++		qcom,micbias4-microvolt = <1800000>;
++
++		qcom,mbhc-buttons-vthreshold-microvolt = <75000 150000 237000
++							 500000 500000 500000
++							 500000 500000>;
++		qcom,mbhc-headset-vthreshold-microvolt = <1700000>;
++		qcom,mbhc-headphone-vthreshold-microvolt = <50000>;
++
++		qcom,rx-device = <&wcd_rx>;
++		qcom,tx-device = <&wcd_tx>;
++
++		#sound-dai-cells = <1>;
++	};
++};
++
++&swr1 {
++	status = "okay";
++
++	wcd_rx: wcd9385-rx@0,4 {
++		compatible = "sdw20217010d00";
++		reg = <0 4>;
++		qcom,rx-port-mapping = <1 2 3 4 5>;
++	};
++};
++
++&swr2 {
++	status = "okay";
++
++	wcd_tx: wcd9385-tx@0,3 {
++		compatible = "sdw20217010d00";
++		reg = <0 3>;
++		qcom,tx-port-mapping = <2 3 4 5>;
++	};
++};
++
++&rxmacro {
++	status = "okay";
++};
++
++&txmacro {
++	status = "okay";
++};
++
++&sound {
++	compatible = "qcom,sm8250-sndcard";
++	model = "OnePlus 8T";
++
++	audio-routing =
++		"IN1_HPHL", "HPHL_OUT",
++		"IN2_HPHR", "HPHR_OUT",
++		"AMIC1", "MIC BIAS1",
++		"AMIC2", "MIC BIAS2",
++		"AMIC3", "MIC BIAS3",
++		"AMIC4", "MIC BIAS3",
++		"AMIC5", "MIC BIAS4",
++		"TX SWR_ADC0", "ADC1_OUTPUT",
++		"TX SWR_ADC1", "ADC2_OUTPUT",
++		"TX SWR_ADC2", "ADC3_OUTPUT",
++		"TX SWR_ADC3", "ADC4_OUTPUT";
++
++	mm1-dai-link {
++		link-name = "MultiMedia1";
++
++		cpu {
++			sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA1>;
++		};
++	};
++
++	mm2-dai-link {
++		link-name = "MultiMedia2";
++
++		cpu {
++			sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA2>;
++		};
++	};
++
++	wcd-playback-dai-link {
++		link-name = "WCD Playback";
++
++		cpu {
++			sound-dai = <&q6afedai RX_CODEC_DMA_RX_0>;
++		};
++
++		platform {
++			sound-dai = <&q6routing>;
++		};
++
++		codec {
++			sound-dai = <&wcd938x 0>, <&swr1 0>, <&rxmacro 0>;
++		};
++	};
++
++	wcd-capture-dai-link {
++		link-name = "WCD Capture";
++
++		cpu {
++			sound-dai = <&q6afedai TX_CODEC_DMA_TX_3>;
++		};
++
++		platform {
++			sound-dai = <&q6routing>;
++		};
++
++		codec {
++			sound-dai = <&wcd938x 1>, <&swr2 0>, <&txmacro 0>;
++		};
++	};
++};

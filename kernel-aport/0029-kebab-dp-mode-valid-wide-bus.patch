@@ -1,0 +1,37 @@
+--- a/drivers/gpu/drm/msm/dp/dp_display.c
++++ b/drivers/gpu/drm/msm/dp/dp_display.c
+@@ -698,6 +698,7 @@
+ 	u32 mode_rate_khz = 0, supported_rate_khz = 0, mode_bpp = 0;
+ 	struct msm_dp *dp;
+ 	int mode_pclk_khz = mode->clock;
++	int link_pclk_khz = mode->clock;
+ 
+ 	dp = to_dp_bridge(bridge)->msm_dp_display;
+ 
+@@ -709,6 +710,14 @@
+ 	msm_dp_display = container_of(dp, struct msm_dp_display_private, msm_dp_display);
+ 	link_info = &msm_dp_display->panel->link_info;
+ 
++	/*
++	 * Wide bus halves the rate the DPU datapath runs at by carrying two
++	 * pixels per clock, so it applies to the controller's pixel-clock
++	 * ceiling below. It does NOT halve what the DP link has to carry --
++	 * every pixel still crosses the wire. Keep the unhalved clock for the
++	 * link bandwidth maths, or this validator is 2x optimistic for every
++	 * non-YUV420 mode and happily advertises modes the link cannot drive.
++	 */
+ 	if ((drm_mode_is_420_only(&dp->connector->display_info, mode) &&
+ 	     msm_dp_display->panel->vsc_sdp_supported) ||
+ 	     msm_dp_wide_bus_available(dp))
+@@ -722,9 +731,9 @@
+ 		mode_bpp = default_bpp;
+ 
+ 	mode_bpp = msm_dp_panel_get_mode_bpp(msm_dp_display->panel,
+-			mode_bpp, mode_pclk_khz);
++			mode_bpp, link_pclk_khz);
+ 
+-	mode_rate_khz = mode_pclk_khz * mode_bpp;
++	mode_rate_khz = link_pclk_khz * mode_bpp;
+ 	supported_rate_khz = mult_frac(link_info->num_lanes * link_info->rate * 8,
+ 				       DP_LINK_BW_MARGIN_PCT, 100);
+ 

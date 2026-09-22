@@ -1,0 +1,20 @@
+--- a/drivers/bus/mhi/host/pci_generic.c
++++ b/drivers/bus/mhi/host/pci_generic.c
+@@ -961,8 +961,16 @@
+ 		.driver_data = (kernel_ulong_t) &mhi_qcom_sdx35_info },
+ 	{ PCI_DEVICE(PCI_VENDOR_ID_QCOM, 0x0304),
+ 		.driver_data = (kernel_ulong_t) &mhi_qcom_sdx24_info },
++	/*
++	 * OnePlus 8T (kebab) and other phones with an embedded SDX55 use
++	 * subsystem 17cb:010c, which collides with a Foxconn M.2 module.
++	 * The Foxconn profile has no .fw, so the host never boots the
++	 * modem and it stalls in PBL with no channels. An embedded SDX55
++	 * has no flash of its own and must be booted by the host, so use
++	 * the qcom profile, which loads qcom/sdx55m/sbl1.mbn.
++	 */
+ 	{ PCI_DEVICE_SUB(PCI_VENDOR_ID_QCOM, 0x0306, PCI_VENDOR_ID_QCOM, 0x010c),
+-		.driver_data = (kernel_ulong_t) &mhi_foxconn_sdx55_info },
++		.driver_data = (kernel_ulong_t) &mhi_qcom_sdx55_info },
+ 	/* EM919x (sdx55), use the same vid:pid as qcom-sdx55m */
+ 	{ PCI_DEVICE_SUB(PCI_VENDOR_ID_QCOM, 0x0306, 0x18d7, 0x0200),
+ 		.driver_data = (kernel_ulong_t) &mhi_sierra_em919x_info },

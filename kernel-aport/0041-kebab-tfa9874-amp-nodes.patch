@@ -1,0 +1,60 @@
+Add the two NXP TFA9874 speaker amplifier nodes to &i2c15, alongside the
+FSA4480 that patch 0018 puts on that same bus.
+
+Regenerated 2026-09-15 against the full series (through 0039), not reused
+from the WSL prework tree: 0018 added fsa4480@42 inside this exact node, so
+the original hunk no longer matched. Wiring is from the stock OxygenOS DTB
+(MASTER 6.2): i2c15 0x34/0x35, reset tlmm 91/99 active-high, pm8150_s4 =
+vreg_s4a_1p8, and no shutdown GPIOs exist on this board.
+
+Carries both nxp,tfa-channel (read by the tfa2 driver, patch 0043) and
+sound-channel (read by the tfa9872 driver, patch 0044), so either driver
+binds to these nodes with no separate devicetree variant.
+
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
+@@ -1576,6 +1576,44 @@
+ 			};
+ 		};
+ 	};
++
++	/*
++	 * NXP TFA9874 smart speaker amplifiers (TFA2 family), left and right.
++	 *
++	 * Verified against the stock OxygenOS DTB: this same i2c15 bus, 0x34 and
++	 * 0x35, reset on tlmm 91 / 99 active-high, both fed from pm8150_s4
++	 * (1.8 V, mainline vreg_s4a_1p8). The stock nodes carry reset-gpio only,
++	 * so there are no shutdown GPIOs to model on this board.
++	 *
++	 * Two channel properties are present deliberately: nxp,tfa-channel is
++	 * read by the tfa2 driver, sound-channel by the alternative tfa9872
++	 * driver, so either can bind to these nodes with no separate DT variant.
++	 */
++	tfa9874_left: speaker-amp@34 {
++		compatible = "nxp,tfa9874";
++		reg = <0x34>;
++
++		vddd-supply = <&vreg_s4a_1p8>;
++		reset-gpios = <&tlmm 91 GPIO_ACTIVE_HIGH>;
++
++		nxp,tfa-channel = <0>;
++		sound-channel = <0>;
++
++		#sound-dai-cells = <0>;
++	};
++
++	tfa9874_right: speaker-amp@35 {
++		compatible = "nxp,tfa9874";
++		reg = <0x35>;
++
++		vddd-supply = <&vreg_s4a_1p8>;
++		reset-gpios = <&tlmm 99 GPIO_ACTIVE_HIGH>;
++
++		nxp,tfa-channel = <1>;
++		sound-channel = <1>;
++
++		#sound-dai-cells = <0>;
++	};
+ };
+ 
+ /*

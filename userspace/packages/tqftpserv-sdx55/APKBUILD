@@ -1,0 +1,48 @@
+# Maintainer: kebab <kebab@example.com>
+pkgname=tqftpserv-sdx55
+pkgver=1.0
+pkgrel=1
+pkgdesc="TFTP/RFS server over QRTR, patched for the PCIe-attached SDX55 (kebab)"
+url="https://github.com/royka1/Xiaomi-Apollo-pmOS-packages"
+arch="aarch64"
+license="BSD-3-Clause"
+depends="qrtr"
+makedepends="qrtr-dev zstd-dev"
+options="!check !strip"
+source="
+	tqftpserv.c
+	translate.c
+	zstd-decompress.c
+	list.h
+	translate.h
+	zstd-decompress.h
+	tqftpserv-sdx55.service
+"
+builddir="$srcdir"
+
+# Two changes against upstream tqftpserv, both genuine upstream bugs:
+#  1. qrtr_publish(fd, 4096, 1, 0) -> (fd, 4096, 3, 0). The PCIe-attached
+#     SDX55 looks up instance 3; upstream only publishes instance 1.
+#  2. tftp_send_data() discarded send() failures; at blksize=7680 x wsize=10
+#     the QRTR send buffer runs out and the stalled transfer ERRFATALs the
+#     modem ~64 s later. send_retry() polls POLLOUT and retries.
+build() {
+	$CC $CFLAGS $LDFLAGS -DHAVE_ZSTD -o tqftpserv-sdx55 \
+		"$srcdir"/tqftpserv.c "$srcdir"/translate.c "$srcdir"/zstd-decompress.c \
+		-I"$srcdir" -lqrtr -lzstd
+}
+
+package() {
+	install -Dm755 "$srcdir"/tqftpserv-sdx55 "$pkgdir"/usr/bin/tqftpserv-sdx55
+	install -Dm644 "$srcdir"/tqftpserv-sdx55.service \
+		"$pkgdir"/usr/lib/systemd/system/tqftpserv-sdx55.service
+}
+sha512sums="
+1d04270a3983bda6f3e1444c515f3bbb800394e30114c8ab9827f0b33f32b1283d564f3d4b347cc23fcc2d96a782d174438acba22c9d34f7fa6b39273da42622  tqftpserv.c
+577bd118f3b3ccee0cdfd7879c4fb7d4b4b137cf4f2e75a206d1a4b2391bebf1b994ea5dc201f8dd480e8cfa1662981362da33f097999c0a3be192d7efc748f0  translate.c
+b95ea15fb1e9675e2d1619ba39694d764ec00e25670ff83c12f0ba4a323698063375ade84e22b3790af97c901bdd418130c0e9f61f546848bb469b0d79a839d3  zstd-decompress.c
+defa4e8d50e8a0399ef4755930ceafaf3d452783d64d82fb31362b6082899303ac87e69cc194d9aa78af3a7136cd32632b1a1cec283d0af2961ed5df748b1351  list.h
+9569d52a1f792da52b0e0bd396c62f4bc0303b7a760e8e687ff9c19f0f0eb4858ce79790db2cb0300ef6d4aae5872a6d4d66be7fded574d5db3f437dbf49678e  translate.h
+dc4e5063f76c64789380f4ac0ee88919a028d923427c59b36e4232c0a00eedd39cc7d259127677d1a89f213508ebffae3b507c7e1d32274608b73f59ae018d83  zstd-decompress.h
+df8e5553fde996654f0cc78d0b48b4079bb5d7f7eb59db1da7a6aecc5457e9eef18b42cc0b83d121553658a192eaa413d42da48b568553d6a1e126c0500120fa  tqftpserv-sdx55.service
+"

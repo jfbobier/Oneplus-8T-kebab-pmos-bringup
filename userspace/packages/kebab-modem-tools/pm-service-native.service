@@ -1,0 +1,19 @@
+[Unit]
+Description=Native Peripheral Manager QMI shim
+DefaultDependencies=no
+After=local-fs.target
+Before=basic.target
+Conflicts=shutdown.target reboot.target halt.target kexec.target poweroff.target
+Before=shutdown.target reboot.target halt.target kexec.target poweroff.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/pm_service_native -V
+Restart=always
+RestartSec=1
+TimeoutStopSec=5
+KillMode=mixed
+SendSIGKILL=yes
+
+[Install]
+WantedBy=sysinit.target

@@ -1,0 +1,6 @@
+postmarketOS: edge
+kernel: 7.2.0
+ModemManager: 1.25.95
+mmcli: 1.25.95
+qmicli: 1.39.0
+base tqftpserv package: 1.2-r0

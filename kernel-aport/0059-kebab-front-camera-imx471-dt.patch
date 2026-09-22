@@ -1,0 +1,84 @@
+diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
+index de2a28285..b5d442b1f 100644
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
+@@ -1928,3 +1928,61 @@ &cci0 {
+ &cci1 {
+ 	status = "okay";
+ };
++
++/*
++ * Front camera (Sony IMX471) VANA load-switch. The vendor camera overlay
++ * (kebab-19805-camera.dts, qcom,cam-sensor@2) gates VANA through a
++ * dedicated GPIO (gpio-req-tbl-label = "CAM_front_VANA", raw pin 0x9c=156)
++ * in addition to the shared vreg_bob rail -- modeled as a fixed regulator
++ * so the imx471 driver's own "vana" regulator_bulk_enable() toggles it.
++ */
++/ {
++	vreg_cam_front_vana: regulator-cam-front-vana {
++		compatible = "regulator-fixed";
++		regulator-name = "vreg_cam_front_vana";
++		regulator-min-microvolt = <2856000>;
++		regulator-max-microvolt = <2856000>;
++		vin-supply = <&vreg_bob>;
++		gpio = <&tlmm 156 GPIO_ACTIVE_HIGH>;
++		enable-active-high;
++	};
++};
++
++&camss {
++	ports {
++		port@4 {
++			reg = <4>;
++			csiphy4_front_ep: endpoint {
++				data-lanes = <1 2 3 4>;
++				remote-endpoint = <&camf_imx471_ep>;
++			};
++		};
++	};
++};
++
++&cci1_i2c0 {
++	camf_imx471: camera@1a {
++		compatible = "sony,imx471";
++		reg = <0x1a>;
++
++		vana-supply = <&vreg_cam_front_vana>;
++
++		clocks = <&camcc CAM_CC_MCLK4_CLK>;
++		assigned-clocks = <&camcc CAM_CC_MCLK4_CLK>;
++		assigned-clock-rates = <19200000>;
++
++		reset-gpios = <&tlmm 144 GPIO_ACTIVE_LOW>;
++		pinctrl-0 = <&cam_mclk4_default>;
++		pinctrl-names = "default";
++
++		orientation = <0>;
++
++		port {
++			camf_imx471_ep: endpoint {
++				data-lanes = <1 2 3 4>;
++				link-frequencies = /bits/ 64 <200000000>;
++				remote-endpoint = <&csiphy4_front_ep>;
++			};
++		};
++	};
++};
+diff --git a/arch/arm64/boot/dts/qcom/sm8250.dtsi b/arch/arm64/boot/dts/qcom/sm8250.dtsi
+index cb84b8fdc..3feed43fb 100644
+--- a/arch/arm64/boot/dts/qcom/sm8250.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm8250.dtsi
+@@ -5200,6 +5200,13 @@ cam_mclk3_default: cam-mclk3-default-state {
+ 				bias-disable;
+ 			};
+ 
++			cam_mclk4_default: cam-mclk4-default-state {
++				pins = "gpio98";
++				function = "cam_mclk";
++				drive-strength = <4>;
++				bias-disable;
++			};
++
+ 			cci0_default: cci0-default-state {
+ 				cci0_i2c0_default: cci0-i2c0-default-pins {
+ 					/* SDA, SCL */

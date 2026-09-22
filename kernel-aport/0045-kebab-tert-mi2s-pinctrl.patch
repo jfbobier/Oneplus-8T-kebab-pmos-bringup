@@ -1,0 +1,63 @@
+Mux the tertiary MI2S pads so the TFA9874 amps actually receive a bit clock.
+
+Found on hardware: with patches 0041/0042 the card probes, DAPM powers both
+amps (PWDN 1->0, AMPE 0->1 confirmed over i2c) -- but the amps report CLKS=0
+and never leave MANSTATE=1, because the TFA98xx derives its internal clock
+from the incoming I2S bit clock and nothing was driving those pads. The DAI
+link alone is not enough; the pins need muxing.
+
+Pins and functions are verbatim from the stock OxygenOS DTB, and the
+attachment point (pinctrl on the &sound node) follows qrb5165-rb5, the
+upstream sm8250 board that drives TERTIARY_MI2S_RX.
+
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
+@@ -1238,6 +1238,13 @@
+ 	compatible = "qcom,sm8250-sndcard";
+ 	model = "OnePlus 8T";
+ 
++	/* Tertiary MI2S pads carry the two TFA9874 speaker amps. Without this
++	 * the pins never leave their default function, no BCLK/WS reaches the
++	 * amps, and they sit at CLKS=0 forever even though DAPM powers them.
++	 * Same attachment point as qrb5165-rb5, which drives TERTIARY_MI2S_RX. */
++	pinctrl-0 = <&tert_mi2s_active>;
++	pinctrl-names = "default";
++
+ 	audio-routing =
+ 		"IN1_HPHL", "HPHL_OUT",
+ 		"IN2_HPHR", "HPHR_OUT",
+@@ -1707,3 +1714,34 @@
+ 	};
+ };
+ 
++&tlmm {
++	/* Pins and mux functions from the stock OxygenOS DTB: gpio133 =
++	 * mi2s2_sck, gpio135 = mi2s2_ws, gpio137 = mi2s2_data1, all
++	 * drive-strength 8, bias-disable. Stock kebab-oem.dtsi sets
++	 * qcom,msm-mi2s-rx-lines = <2> on this port, i.e. MSM_MI2S_SD1, so
++	 * playback to the amps leaves on SD1 (gpio137) -- NOT SD0. SD0
++	 * (gpio134) is stock TX (tx-lines = <1>), the amps VI-sense
++	 * return, which this DSP-bypass path does not use. */
++	tert_mi2s_active: tert-mi2s-active-state {
++		sck-pins {
++			pins = "gpio133";
++			function = "mi2s2_sck";
++			drive-strength = <8>;
++			bias-disable;
++		};
++
++		ws-pins {
++			pins = "gpio135";
++			function = "mi2s2_ws";
++			drive-strength = <8>;
++			bias-disable;
++		};
++
++		data1-pins {
++			pins = "gpio137";
++			function = "mi2s2_data1";
++			drive-strength = <8>;
++			bias-disable;
++		};
++	};
++};

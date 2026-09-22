@@ -1,0 +1,55 @@
+Add a tertiary MI2S playback DAI link carrying both TFA9874 amps, plus the
+matching q6afedai dai@14 (TERTIARY_MI2S_RX = 20) that it references.
+
+This closes the last of the three gaps MASTER 6.3 identifies: 0009 builds
+the sndcard and 0010 the Q6 DAI nodes, but neither contains any MI2S. One
+multi-codec link, both amps on the same frame, after the Apollo CS35L41
+two-amps-one-frame shape.
+
+Deliberately does NOT touch audio-routing: the speaker DAPM path lives
+inside the codec driver, and a wrong card-level route name fails the whole
+card's probe, which would take working WCD/headphone audio down with it.
+
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
+@@ -1298,6 +1298,28 @@
+ 			sound-dai = <&wcd938x 1>, <&swr2 0>, <&txmacro 0>;
+ 		};
+ 	};
++
++	/*
++	 * Tertiary MI2S carries the two TFA9874 speaker amps. Both amps sit on
++	 * the same frame and each picks its own channel, so this is a single
++	 * multi-codec link rather than two links (same shape as the Xiaomi
++	 * Apollo CS35L41 pair on this SoC).
++	 */
++	tert-mi2s-dai-link {
++		link-name = "Tertiary MI2S Playback";
++
++		cpu {
++			sound-dai = <&q6afedai TERTIARY_MI2S_RX>;
++		};
++
++		platform {
++			sound-dai = <&q6routing>;
++		};
++
++		codec {
++			sound-dai = <&tfa9874_left>, <&tfa9874_right>;
++		};
++	};
+ };
+ 
+ /*
+@@ -1331,6 +1353,11 @@
+ 	dai@78 {
+ 		reg = <TX_CODEC_DMA_TX_3>;
+ 	};
++
++	dai@14 {
++		reg = <TERTIARY_MI2S_RX>;
++		qcom,sd-lines = <1>;
++	};
+ };
+ 
+ /* kebab-sdx55-gic-mbi-test

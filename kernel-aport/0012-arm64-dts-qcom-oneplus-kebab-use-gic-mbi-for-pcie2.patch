@@ -1,0 +1,39 @@
+From: OnePlus kebab local bring-up <local@invalid>
+Subject: [PATCH] arm64: dts: qcom: oneplus-kebab: use GIC MBI for PCIe2
+
+The embedded SDX55 currently writes its MSI to the DesignWare internal
+receiver address, but that transaction reaches the endpoint SMMU domain and
+faults at IOVA 0x64100000. Route PCIe2 MSI through a 32-vector GICv3 MBI
+range matching the stock interrupt allocation and doorbell alias.
+
+This is a focused diagnostic change. It does not alter iommu-map or enable
+any global IOMMU bypass.
+
+---
+diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
+index 1e77d21ed..d3f6cc337 100644
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
+@@ -1318,3 +1318,22 @@ dai@78 {
+ 		reg = <TX_CODEC_DMA_TX_3>;
+ 	};
+ };
++
++/* kebab-sdx55-gic-mbi-test
++ *
++ * PCIe2 hosts the embedded SDX55 modem. Route its 32 MSI vectors through
++ * the GICv3 MBI path so the MSI doorbell is mapped into the endpoint IOMMU
++ * domain instead of using the DesignWare internal MSI receiver.
++ *
++ * OxygenOS uses GIC SPI 832..863 and a SETSPI doorbell at 0x17a10040.
++ * GIC MBI ranges use absolute INTIDs, so the matching range is 864..895.
++ */
++&intc {
++	msi-controller;
++	mbi-ranges = <864 32>;
++	mbi-alias = <0x0 0x17a10000>;
++};
++
++&pcie2 {
++	msi-parent = <&intc>;
++};

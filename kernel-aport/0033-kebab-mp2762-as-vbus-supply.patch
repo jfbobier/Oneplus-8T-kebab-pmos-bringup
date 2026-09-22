@@ -1,0 +1,21 @@
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
+@@ -1480,7 +1480,17 @@
+ 	 * so a bus-powered USB-C adapter never powers up, never answers on CC, and
+ 	 * no partner is detected at all - no PD, no altmode, no HPD.
+ 	 */
+-	vdd-vbus-supply = <&pm8150b_vbus>;
++	/*
++	 * VBUS comes from the MP2762A, not the pm8150b boost. kebab is a 2S
++	 * device (battery 8.6 V), so the pm8150b OTG boost - which exists to
++	 * lift a 1S cell to 5 V - can never source this port; every attach
++	 * logged "vbus vsafe5v fail" because of it. The MP2762A enable
++	 * sequence was verified on hardware: vSafe5V held for 60 s with
++	 * otg_fail=0/oc_hiccup=0, and a bus-powered keyboard enumerated as
++	 * HID on usb_1. pm8150b_vbus stays enabled but unused, so dropping
++	 * this patch alone restores the previous wiring.
++	 */
++	vdd-vbus-supply = <&otg_vbus>;
+ 
+ 	connector {
+ 		compatible = "usb-c-connector";

@@ -1,0 +1,64 @@
+From 6394be7fddaaaff911b10eae5053ff3c78262dd3 Mon Sep 17 00:00:00 2001
+From: kebab bring-up <local@invalid>
+Date: Fri, 18 Sep 2026 12:20:00 +0200
+Subject: [PATCH] kebab: run CCI1 i2c0 at 400kHz fast-mode instead of 1MHz Fm+
+
+sm8250.dtsi gives every CCI child bus clock-frequency = <1000000>, and
+kebab inherited that unexamined. Confirmed live:
+
+  /proc/device-tree/soc@0/cci@ac50000/i2c-bus@0/clock-frequency = 000f4240
+
+1MHz is I2C Fast-mode Plus. Sony IMX-family image sensors are specified
+for 400kHz fast-mode. The module EEPROM that shares this bus is a
+24C64-family part (the stock camera HAL identifies the module as
+"imx471_p24c64e"), and those are commonly Fm+ rated -- so the EEPROM
+ACKing at 0x50/0x58 while the sensor stayed silent is exactly what an
+over-speed bus would look like, and is not evidence that the sensor is
+dead.
+
+Worth being precise about why this was never actually tested: before
+patch 0072 the CCI v2 timing table was being clocked at 19.2MHz rather
+than the 37.5MHz it is calibrated for, so a requested 1MHz was really
+emitted at about 1MHz * 19.2/37.5 ~= 512kHz -- already out of spec. 0072
+fixed the timing reference, which had the side effect of raising real SCL
+to a true 1MHz, further out of spec. The sensor has therefore never once
+been addressed at a legal bus rate, including during the 0070 and 0075
+full-address-space scans that were used to argue for a hardware fault.
+
+Set this one bus (the one the front sensor and its EEPROM live on) to
+400kHz. Scope is deliberately narrow: cci1_i2c0 only, leaving cci0 and
+cci1_i2c1 at the upstream default.
+---
+ .../arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
+index 107bb1a45..8a76fd93e 100644
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
+@@ -2013,6 +2013,22 @@ csiphy4_front_ep: endpoint {
+ };
+ 
+ &cci1_i2c0 {
++	/*
++	 * Fast-mode (400kHz), not the 1MHz Fm+ that sm8250.dtsi defaults every
++	 * CCI child bus to. Sony IMX-family sensors are specified for 400kHz
++	 * I2C; the 24C64-style module EEPROM sharing this bus is an Fm+ part,
++	 * which is why it kept ACKing at 1MHz while the sensor never did.
++	 *
++	 * Note this was never actually tested at a legal rate before: prior to
++	 * patch 0072 the CCI v2 timing table was being fed 19.2MHz instead of
++	 * the 37.5MHz it is calibrated for, so a requested 1MHz came out at
++	 * roughly 1MHz * 19.2/37.5 ~= 512kHz -- still over spec. 0072 then
++	 * corrected the timing reference and thereby raised real SCL to a true
++	 * 1MHz, further over spec. Both full-bus scans (0070, 0075) ran under
++	 * one or the other of those conditions.
++	 */
++	clock-frequency = <400000>;
++
+ 	camf_imx471: camera@1a {
+ 		compatible = "sony,imx471";
+ 		reg = <0x1a>;
+-- 
+2.55.0
+

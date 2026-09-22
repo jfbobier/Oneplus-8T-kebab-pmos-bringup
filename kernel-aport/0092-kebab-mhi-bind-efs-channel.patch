@@ -1,0 +1,58 @@
+diff -urN old/drivers/net/wwan/mhi_wwan_ctrl.c new/drivers/net/wwan/mhi_wwan_ctrl.c
+--- old/drivers/net/wwan/mhi_wwan_ctrl.c	2026-09-21 13:53:51.714130391 +0200
++++ new/drivers/net/wwan/mhi_wwan_ctrl.c	2026-09-21 13:53:51.731595845 +0200
+@@ -263,6 +263,21 @@
+ 	{ .chan = "DIAG", .driver_data = WWAN_PORT_QCDM },
+ 	{ .chan = "FIREHOSE", .driver_data = WWAN_PORT_FIREHOSE },
+ 	{ .chan = "NMEA", .driver_data = WWAN_PORT_NMEA },
++	/*
++	 * The phone-embedded SDX55 runs an RMTEFS firmware build: it has no
++	 * storage of its own and expects the AP to host its filesystem over
++	 * MHI channel 10/11 (the job Android gives to /vendor/bin/ks).
++	 * Without a driver bound here, mhi0_EFS exists but nothing services
++	 * it, so the modem's EFS stays read-only and RAM-backed from the
++	 * static Sahara efs{1,2,3}.bin images. It then ERRFATALs a fixed
++	 * ~73 s after its first EFS-Sync, and its NV (IMEI, RF calibration)
++	 * never persists.
++	 *
++	 * Exposing it as a wwan char device lets a userspace daemon speak
++	 * the Sahara memory-debug protocol on it. Not upstreamable as-is:
++	 * EFS is not a generic control port.
++	 */
++	{ .chan = "EFS", .driver_data = WWAN_PORT_EFS },
+ 	{},
+ };
+ MODULE_DEVICE_TABLE(mhi, mhi_wwan_ctrl_match_table);
+diff -urN old/drivers/net/wwan/wwan_core.c new/drivers/net/wwan/wwan_core.c
+--- old/drivers/net/wwan/wwan_core.c	2026-09-21 13:53:51.707091936 +0200
++++ new/drivers/net/wwan/wwan_core.c	2026-09-21 13:53:51.731565257 +0200
+@@ -350,6 +350,10 @@
+ 		.devsuf = "mipc",
+ 	},
+ 	/* WWAN_PORT_NMEA is exported via the GNSS subsystem */
++	[WWAN_PORT_EFS] = {
++		.name = "EFS",
++		.devsuf = "efs",
++	},
+ };
+ 
+ static ssize_t type_show(struct device *dev, struct device_attribute *attr,
+diff -urN old/include/linux/wwan.h new/include/linux/wwan.h
+--- old/include/linux/wwan.h	2026-09-21 13:53:51.699552991 +0200
++++ new/include/linux/wwan.h	2026-09-21 13:53:51.731497917 +0200
+@@ -20,6 +20,7 @@
+  * @WWAN_PORT_ADB: ADB protocol control
+  * @WWAN_PORT_MIPC: MTK MIPC diagnostic interface
+  * @WWAN_PORT_NMEA: embedded GNSS receiver with NMEA output
++ * @WWAN_PORT_EFS: Qcom remote-EFS (Sahara memory-debug) filesystem channel
+  *
+  * @WWAN_PORT_MAX: Highest supported port types
+  * @WWAN_PORT_UNKNOWN: Special value to indicate an unknown port type
+@@ -36,6 +37,7 @@
+ 	WWAN_PORT_ADB,
+ 	WWAN_PORT_MIPC,
+ 	WWAN_PORT_NMEA,
++	WWAN_PORT_EFS,
+ 
+ 	/* Add new port types above this line */
+ 

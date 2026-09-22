@@ -1,0 +1,92 @@
+From 940ee1c34f85549e9c1e3b65da4b32abd06002a6 Mon Sep 17 00:00:00 2001
+From: kebab bring-up <local@invalid>
+Date: Fri, 18 Sep 2026 12:29:00 +0200
+Subject: [PATCH] kebab: pin cam_vdig (pm8008_l1) to 1.104V, the nearest
+ settable step to vendor 1.1V
+
+The vendor devicetree specifies cam_vdig as a single point, not a range:
+
+  kebab-19805-camera.dts, qcom,cam-sensor@2:
+    rgltr-min-voltage / rgltr-max-voltage = 0x10c8e0 = 1100000uV
+
+Declared here as a 528000-1200000 range, the core parks L1P at the range
+maximum, so it has been running at 1.2V -- 100mV over vendor spec.
+
+1100000uV cannot be requested literally. The pm8008 LDO steps in 8mV, so
+the regulator core rounds the minimum up to 1104000 and the maximum down
+to 1096000, producing an inverted window and refusing the constraint:
+
+  pm8008_l1: unsupportable voltage constraints 1104000-1096000uV
+  qcom-pm8008-regulator: failed to register regulator ldo1: -22
+  qcom-pm8008-regulator: probe ... failed with error -22
+
+Because ldo1 registration failing aborts the driver's whole probe, none
+of L1-L7 get registered -- so this takes out cam_vio (L4, 1.8V) as well
+as cam_vdig. With both rails gone every device on the camera bus is
+unpowered, the CCI controller cannot even complete an address phase, and
+the entire bus reports "master 0 queue 1 timeout" rather than a NACK.
+The module EEPROM at 0x50/0x58, which had ACKed reliably until now,
+goes silent too. That is a pure self-inflicted power failure and says
+nothing whatsoever about the image sensor.
+
+This also retroactively explains patch 0066. 0066 made this identical
+mistake, and 0068 reverted it on the strength of the failure changing
+from -ENXIO to -ETIMEDOUT, recording that as a sensor-level regression.
+It was not: it was this same PMIC probe cascade. The 1.1V rail value has
+therefore still never actually been evaluated.
+
+Use 1104000uV, the nearest settable step above the vendor's nominal
+(1096000 is the nearest below; both are within 0.4% of 1.1V).
+---
+ .../boot/dts/qcom/sm8250-oneplus-kebab.dts    | 35 +++++++++++++++----
+ 1 file changed, 29 insertions(+), 6 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
+index 8a76fd93e..3b9b78fcb 100644
+--- a/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts
+@@ -1894,12 +1894,35 @@ pm8008: pmic@8 {
+ 		regulators {
+ 			L1P: ldo1 {
+ 				regulator-name = "pm8008_l1";
+-				/* kebab-19805-camera.dts's cam-sensor@2 rgltr-min/max-voltage
+-				 * for cam_vdig are both 0x10c8e0 = 1100000uV exactly -- not a
+-				 * range. Pin it instead of leaving it to float to this
+-				 * range's max (1.2V), which was 100mV over vendor spec. */
+-				regulator-min-microvolt = <528000>;
+-				regulator-max-microvolt = <1200000>;
++				/* cam_vdig. kebab-19805-camera.dts's cam-sensor@2 gives
++				 * rgltr-min-voltage == rgltr-max-voltage == 0x10c8e0 ==
++				 * 1100000uV for this rail -- a single point, not a range.
++				 * Left as a 528000-1200000 range the core parks it at the
++				 * range max, i.e. 1.2V, which is 100mV over vendor spec and
++				 * was confirmed live in regulator_summary.
++				 *
++				 * Patch 0066 already tried pinning this to 1.1V and was
++				 * reverted by 0068 as a "regression" because the failure
++				 * changed from -ENXIO to -ETIMEDOUT. That verdict is not
++				 * usable: 0066 ran while VANA was still inverted by patch
++				 * 0060, so the sensor's analog rail was switched OFF for the
++				 * whole transaction. Both outcomes were measured on an
++				 * unpowered sensor and neither means anything. 0077 fixed
++				 * the polarity, so retry the vendor value on its merits.
++				 *
++				 * NB: 1100000 itself is NOT settable on this PMIC. The
++				 * pm8008 LDO steps in 8mV, so the core rounds min up to
++				 * 1104000 and max down to 1096000, ends up with min > max
++				 * and bails:
++				 *   pm8008_l1: unsupportable voltage constraints
++				 *              1104000-1096000uV
++				 *   qcom-pm8008-regulator: failed to register ldo1: -22
++				 * That kills the whole pm8008-regulator probe, so L1 AND L4
++				 * (cam_vdig AND cam_vio) both vanish and every device on the
++				 * camera bus loses power -- the EEPROM included. Use the
++				 * nearest representable step instead. */
++				regulator-min-microvolt = <1104000>;
++				regulator-max-microvolt = <1104000>;
+ 				/* cam_vdig for the front sensor (1.1V, per
+ 				 * kebab-19805-camera.dts's cam-sensor@2). imx471.c
+ 				 * only regulator_bulk_gets "vana" itself, so keep
+-- 
+2.55.0
+
