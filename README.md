@@ -1,49 +1,56 @@
-# OnePlus 8T (kebab) — refactored postmarketOS tree
+# OnePlus 8T (kebab) — postmarketOS
 
-A streamlined rebuild of the OnePlus 8T (`kebab`, KB2003 — SM8250 plus a
-discrete SDX55 modem) bring-up for postmarketOS on the
-`linux-postmarketos-qcom-sm8250` 7.2.0 kernel.
+Bring-up tree for the OnePlus 8T (`kebab`, KB2003 — SM8250 plus a discrete
+SDX55 modem) on postmarketOS with the `linux-postmarketos-qcom-sm8250`
+7.2.0 kernel.
 
-The bring-up stack was 81 active kernel patches: a journal of experiments,
-diagnostics, reverts and board description, in the order it was discovered.
-This tree is the same working state expressed as what it actually is.
+18 kernel patches, one board devicetree, and the userspace rules and ALSA
+profile the hardware needs. Built, flashed and verified on hardware on
+2026-10-01: `scripts/verify-on-device.sh` reports 26 passed, 0 failed.
 
-| | Before | After |
-|---|---:|---:|
-| Kernel patches | 81 | **18** |
-| Board devicetree | ~45 patches | **1 file** |
-| Amplifier drivers bound to `nxp,tfa9874` | 2 | **1** |
-| Debug/diagnostic patches | 22 | **0** |
-| Workarounds kept but disabled | 0 | 3 (`kernel/optional/`) |
-| Lines in a boot `dmesg` | 3762 | **1251** |
+## Hardware status
 
-**Built, flashed and verified on hardware on 2026-10-01**:
-`scripts/verify-on-device.sh` reports 26 passed, 0 failed, and a
-normalised diff of the full boot log against the pre-refactor kernel shows
-zero new error, warning or timeout lines.
+| Area | Status |
+|---|---|
+| Display, touch, GPU | working |
+| Wi-Fi, Bluetooth, NFC | working |
+| Audio: loudspeakers (both TFA9874 amps) | working, in stereo |
+| Audio: digital microphones (VA macro) | working |
+| Audio: in-call routing | needs an earpiece port for callaudiod |
+| USB-C, OTG VBUS | working |
+| Battery level reporting | working (`bq27541` fuel gauge) |
+| DisplayPort over USB-C | working, including 1440p on a monitor that previously hung the device |
+| Front camera (IMX471) | working |
+| Rear cameras | not brought up — no mainline drivers |
+| SDX55 modem boot, SIM, PIN | working and stable |
+| Cellular data, GPS | **not working** |
 
-**Seven of the eighteen patches were found by testing this refactor**, not
-carried over from the bring-up stack, and all seven are generic fixes with
-no kebab specifics in them:
+**Cellular data is the open problem.** The modem boots to mission mode and
+stays up, the SIM is read and the PIN accepted, but MCFG aborts during
+apply and the NV — IMEI, RF calibration — lives in an `OEMNVBK` container
+rather than in the EFS, so it is not provisioned.
+[`docs/research/MODEM.md`](docs/research/MODEM.md) is the full trail of
+what was tried; start at §4.4 if you want to pick it up.
 
-* `0014` makes DisplayPort link-training fallback reachable at all on
-  Type-C boards — it had been dead code because the retry loop gated
-  itself on a controller HPD register that always reads DISCONNECTED when
-  HPD arrives through a `drm_dp_hpd_bridge`. This made a 4K monitor work
-  that had never worked on this device before.
-* `0015` fixes a NULL dereference that oopsed the kernel on reading the DP
-  test debugfs files.
-* `0016`-`0018` stop three `dev_err` messages firing on entirely healthy
-  code paths, which is most of the 67% reduction in boot log size.
+Smaller caveats worth knowing before you file a bug:
 
-The two loudspeakers also play in **genuine stereo** for the first time;
-`docs/REGRESSIONS.md` AUDIO-3 has the two independent causes and the
-evidence for each.
-
-[`docs/REGRESSIONS.md`](docs/REGRESSIONS.md) is the journal: every
-behavioural difference, what was verified and how, what was not, and the
-exact way back for each one. Read HW-1 for what is still untested — most
-of it needs a cable and a person.
+* **DisplayPort mode selection.** After the link falls back to fewer lanes
+  or a lower rate, the driver still advertises modes sized for the sink's
+  maximum rather than the trained link, so a 4K monitor may be offered
+  3840x2160 and show black until you pick a lower mode by hand. DP-1/DP-2
+  in the journal.
+* **Two boot `WARNING`s** at ~0.6 s from the DSI PHY PLL, which taint the
+  kernel. They are upstream, harmless, and the display works because the
+  failed clock prepare unwinds cleanly. NOISE-1 explains why fixing them
+  properly means clk-core surgery.
+* **No kernel charger driver.** The `mp2762a` at `i2c-5 0x5c` is claimed
+  by this tree's OTG VBUS regulator only, so charge current and charge
+  state are not under kernel control and are not reported — only the fuel
+  gauge's battery level is. The device does charge; nothing in Linux
+  manages it.
+* **Rear cameras and in-call audio routing** are not brought up at all.
+* **Some firmware must be installed by hand** — see below. It is
+  OEM-signed and device-specific, so it is not in this repository.
 
 ## Layout
 
@@ -62,22 +69,6 @@ docs/                  REFACTOR.md   what moved where
                        KERNEL-BUMP.md moving to a newer SM8250 kernel
                        research/      why the hardware needs what it needs
 ```
-
-### A note on provenance
-
-Paths beginning `original/` in these documents refer to the 81-patch
-bring-up archive this work started from.
-
-Its **research notes are kept**, in [`docs/research/`](docs/research/) —
-they record *why* this hardware needs what it needs, which this tree
-deliberately does not repeat. `docs/research/MODEM.md` is the one to read
-if you are picking up the cellular-data problem, which is still unsolved.
-
-Its **code is not**: the 81 patches, its `userspace/` and its `tools/` are
-superseded, and keeping a buildable copy would invite someone to build
-from it. Citations beginning `original/kernel-aport/` or
-`original/userspace/` therefore point outside this repository; they are
-kept so a claim can be traced to its source rather than asserted.
 
 ## Build
 
@@ -204,29 +195,36 @@ cp kernel/optional/0001-OPTIONAL-drm-msm-dp-keep-a-bandwidth-margin-*.patch kern
 pmbootstrap checksum linux-postmarketos-qcom-sm8250
 ```
 
-## Hardware status
+## Documentation
 
-Carried over unchanged from the bring-up archive — this refactor changes
-how the work is expressed, not what works.
-
-| Area | Status |
+| | |
 |---|---|
-| Display, touch, GPU | working |
-| Wi-Fi, Bluetooth, NFC | working (Bluetooth address handling changed — BT-1) |
-| USB-C, DisplayPort, OTG VBUS | working (two workarounds dropped — DP-1, DP-2) |
-| Audio: loudspeakers (both TFA9874 amps) | working, **stereo** — AUDIO-3 |
-| Audio: digital microphones (VA macro) | working |
-| Audio: in-call routing | needs an earpiece port for callaudiod — AUDIO-UCM |
-| Front camera (IMX471) | working |
-| Rear cameras | not brought up; no mainline drivers |
-| SDX55 boot, SIM, PIN | working and stable |
-| Cellular data, GPS | **not working** — MCFG aborts during apply; see `docs/research/MODEM.md` |
+| [`docs/REGRESSIONS.md`](docs/REGRESSIONS.md) | the journal — every known behavioural quirk, what was verified and how, what was not, and the exact way back for each one. Items are referenced by tag (`AUDIO-3`, `DP-1`, `MODEM-2`, …) from the verification script and the commit history. |
+| [`docs/REFACTOR.md`](docs/REFACTOR.md) | what lives where, and why each of the 18 patches cannot be configuration instead |
+| [`docs/KERNEL-BUMP.md`](docs/KERNEL-BUMP.md) | moving this tree onto a newer SM8250 kernel |
+| [`docs/research/`](docs/research/) | why the hardware needs what it needs — modem, camera and general findings from the bring-up |
+
+This tree started as 81 incremental kernel patches and is the same working
+state consolidated: the board description became one devicetree, the
+diagnostics and reverts went away, and policy that had been patched into
+the kernel became packaged configuration. Nine of the remaining 18 patches
+are generic fixes with no kebab specifics in them and are candidates for
+upstream as they stand.
+
+Paths beginning `original/` in the documents above refer to that
+81-patch archive. Its research notes are kept, under
+[`docs/research/`](docs/research/); its code is not, because it is
+superseded. Citations beginning `original/kernel-aport/` or
+`original/userspace/` therefore point outside this repository, and are
+kept so a claim can be traced to its source rather than asserted.
 
 ## Licensing
 
 Repository-authored material is GPL-2.0-only. Kernel patches and imported
-source keep their own SPDX notices. `packages/tqftpserv-sdx55` is
-BSD-3-Clause and is not relicensed.
+source keep their own SPDX notices: the consolidated devicetree is
+BSD-3-Clause, as board devicetrees upstream are, and
+`packages/tqftpserv-sdx55` is BSD-3-Clause and is not relicensed. Both
+licence texts are in [`LICENSES/`](LICENSES/) and [`LICENSE`](LICENSE).
 
 No SIM PIN, IMEI, ICCID, EFS/NV dump, DIAG capture, modem firmware,
 partition image, key or token is in this repository, and none should be
