@@ -1,29 +1,41 @@
-# Device-specific/private captures
+# Working kernel source tree (2+ GB, a full checkout plus its git history).
+# Recreate it by extracting the tarball named in kernel/APKBUILD.
+.work/
+
+# The pre-refactor bring-up archive. Superseded; kept locally as the
+# provenance for the citations in docs/, not redistributed from here.
+original/
+
+# Build host state: boot-log snapshots, build logs, rollback boot images.
+.baseline/
+.buildlogs/
+.rollback/
+.pmaports-backup-*/
+
+# Device-specific or private captures. Nothing here belongs in a public
+# repository: no SIM PIN, IMEI, ICCID, EFS/NV dump, DIAG capture, modem
+# firmware, partition image, key or token.
 private/
 captures/
 efs/
 nv/
 firmware/
 *.qmdl
-*.img
 *.mbn
 *.elf
 *.qdb
+*.img
+*.img.gz
 *.log
 
-# Local build/output
+# Build output and artifacts
 *.apk
+*.dtb
 *.tar
 *.tar.gz
 *.zip
 __pycache__/
 *.pyc
 
-# Device/subscriber secrets and captures
-*sim-pin*
-*imei*restore*
-*.qmdl
-*.mbn
-*.img
-*efs*dump*
-*nv*dump*
+# Windows/WSL NTFS metadata
+*:Zone.Identifier

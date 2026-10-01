@@ -1,0 +1,136 @@
+# Reference: <https://postmarketos.org/devicepkg>
+maintainer="Frieder Hannenheim <git@fhannenheim.net>"
+pkgname=device-oneplus-kebab
+pkgdesc="OnePlus 8T"
+pkgver=8
+pkgrel=0
+url="https://postmarketos.org"
+license="MIT"
+arch="aarch64"
+options="!check !archcheck"
+depends="
+	bluez
+	firmware-oneplus-instantnoodlep
+	linux-postmarketos-qcom-sm8250
+	mkbootimg
+	postmarketos-base
+"
+makedepends="
+	devicepkg-dev
+	dtc
+"
+subpackages="
+	$pkgname-audio
+	$pkgname-modem
+"
+source="
+	deviceinfo
+	sm8250-oneplus-kebab-empty.dts
+	90-kebab-bluetooth-addr.rules
+	kebab-bluetooth-addr
+	kebab-bluetooth-addr@.service
+	77-mm-ignore-sdx55-efs.rules
+	77-mm-sdx55-fusion.rules
+	90-kebab-mhi-debug.conf
+	kebab-uim-provision
+	kebab-uim-provision.service
+	kebab-pcie2-no-runtime-pm.service
+	ucm-OnePlus-8T.conf
+	ucm-HiFi.conf
+"
+
+build() {
+	devicepkg_build $startdir $pkgname
+
+	dtc -O dtb -o "$srcdir/dtbo.img" -I dts "$srcdir/sm8250-oneplus-kebab-empty.dts"
+}
+
+package() {
+	devicepkg_package $startdir $pkgname
+
+	install -Dm644 "$srcdir/dtbo.img" "$pkgdir/boot/dtbo.img"
+
+	# Per-device Bluetooth address. The QCA6390 firmware ships a
+	# placeholder, so the controller registers unconfigured and bluetoothd
+	# never sees an adapter; this assigns a locally administered address
+	# derived from /etc/machine-id rather than baking one constant into
+	# the devicetree.
+	install -Dm755 "$srcdir"/kebab-bluetooth-addr \
+		"$pkgdir"/usr/bin/kebab-bluetooth-addr
+	install -Dm644 "$srcdir"/kebab-bluetooth-addr@.service \
+		"$pkgdir"/usr/lib/systemd/system/kebab-bluetooth-addr@.service
+	install -Dm644 "$srcdir"/90-kebab-bluetooth-addr.rules \
+		"$pkgdir"/usr/lib/udev/rules.d/90-kebab-bluetooth-addr.rules
+}
+
+audio() {
+	pkgdesc="$pkgdesc (ALSA UCM profile)"
+	depends="alsa-ucm-conf"
+	install_if="$pkgname=$pkgver-r$pkgrel alsa-ucm-conf"
+
+	# The conf.d file name must match the ALSA card name exactly, spaces
+	# included, so it is shipped under a flat name and renamed on install.
+	install -Dm644 "$srcdir"/ucm-OnePlus-8T.conf \
+		"$subpkgdir/usr/share/alsa/ucm2/conf.d/sm8250/OnePlus 8T.conf"
+	install -Dm644 "$srcdir"/ucm-HiFi.conf \
+		"$subpkgdir"/usr/share/alsa/ucm2/Qualcomm/sm8250/OnePlus8T/HiFi.conf
+}
+
+modem() {
+	pkgdesc="$pkgdesc (SDX55 modem integration)"
+	depends="
+		libqmi
+		modemmanager
+		tqftpserv-sdx55
+		kebab-modem-tools
+	"
+
+	# ModemManager must not AT-probe the EFS transport: the modem's
+	# rmts_srv receives the strings as garbage and ERRFATALs within two
+	# seconds. This rule is mandatory whenever the kernel exposes
+	# /dev/wwan0efs0.
+	install -Dm644 "$srcdir"/77-mm-ignore-sdx55-efs.rules \
+		"$subpkgdir"/usr/lib/udev/rules.d/77-mm-ignore-sdx55-efs.rules
+	install -Dm644 "$srcdir"/77-mm-sdx55-fusion.rules \
+		"$subpkgdir"/usr/lib/udev/rules.d/77-mm-sdx55-fusion.rules
+
+	# Why the mhi module is loaded with all its dev_dbg sites on, what it
+	# costs, and how to turn it off. See NOISE-3 in docs/REGRESSIONS.md.
+	install -Dm644 "$srcdir"/90-kebab-mhi-debug.conf \
+		"$subpkgdir"/usr/lib/modprobe.d/90-kebab-mhi-debug.conf
+
+	install -Dm755 "$srcdir"/kebab-uim-provision \
+		"$subpkgdir"/usr/bin/kebab-uim-provision
+
+	# mhi-efs-sync.service ships with kebab-modem-tools and
+	# tqftpserv-sdx55.service with tqftpserv-sdx55, next to the binaries
+	# they start. These two are board policy.
+	install -Dm644 "$srcdir"/kebab-uim-provision.service \
+		"$subpkgdir"/usr/lib/systemd/system/kebab-uim-provision.service
+
+	# Pinning the PCIe2 *host controller* out of runtime suspend is still
+	# needed even with the MHI no_m3 fix in the kernel: pcie-qcom's own
+	# runtime suspend gates the PIPE clocks and puts the PHY in low power,
+	# which drops the link under the modem. Enable this one.
+	install -Dm644 "$srcdir"/kebab-pcie2-no-runtime-pm.service \
+		"$subpkgdir"/usr/lib/systemd/system/kebab-pcie2-no-runtime-pm.service
+	install -d "$subpkgdir"/usr/lib/systemd/system/multi-user.target.wants
+	ln -s ../kebab-pcie2-no-runtime-pm.service \
+		"$subpkgdir"/usr/lib/systemd/system/multi-user.target.wants/kebab-pcie2-no-runtime-pm.service
+}
+
+sha512sums="
+696313f074520c21a48c348c449d433af0e8e7a8c8c5e12496568c3c83edcb23afbf957e4b4145eaa6b7c8a12764a8de19f05e4a72ab2062b0c119e9861d0b8d  deviceinfo
+fa4866865dd9e6388b7ee2319954d2317245c5618a0ebd9250abae7d58e08aa4a248a6dd9a87a820b30615b8f9f6e5f66b6883a47f7f0d3d69bfffe3440f33b2  sm8250-oneplus-kebab-empty.dts
+a27821821426e2a043151429824a082a928f733b453fbe9e03b6b296f2912ef3dc128b5285c3efdcb53a8ce49547a33e9041265711350858fe814bec45b62308  90-kebab-bluetooth-addr.rules
+be28f8a7f4a1b0c072df28fda16eabe43acf629bac47ecbf9f8e0d254e57c72a74c03daee5c239a566ee4488930ae5a10ee021bbb1b3e44a72fe042d6b072325  kebab-bluetooth-addr
+a6cdf2864b380e21afbbeb867bcc6c63910bd3d8c5ef9afc7e07bbe2da0ff957dbafb9d7161bf0a4c5c331d3819a252bff149e437ad17f78df902f4d85dd4f46  kebab-bluetooth-addr@.service
+ba8b492299eb0fd166a883f74f3935642d487e8b3778c4c0fe3dd4bc8b423d506cb4efbd702786808d94bc209122fdbee304f59d68fc7665216c0cb52995586e  77-mm-ignore-sdx55-efs.rules
+d17db97450eba55d7e334dfa53c3e9cd395b99a64d0a7378471d6edb7f8757010673bd1a2efd9d20174a7990d5e2fcee033dbdb8b40ba1d88a1d64e344568e7f  77-mm-sdx55-fusion.rules
+000d4b23e498558fc3d2b92e2c536922aa09c57adc93814a38aeefcc13bde827cd006ef5f6172277066c0cb46a064fcd2b57efd9830433458cb8a85dfbd2f2fd  90-kebab-mhi-debug.conf
+a7544efd8cacca43fa1dfc60ba58a9368c82b6a9f09c65ee82467101e77cb9447876b57613c8c15062e75935f58bd92710667a2382d7c87864bc4738cf69c47c  kebab-uim-provision
+7ac37cae674cca64d8c1980186fb1d746f13287d854ee026b620446039eaedeebefbdfe3228fc69bd3c5f357a06950b6a9d1dcd994c39e80679aa5b558c42c93  kebab-uim-provision.service
+8802d57af6acd79175617bb87c43c8875e0950a1988fbc2da929223efc654992a5347137b22e27d3401925088ee54a8fd6e42a3fc69edd9b7bd905fe78aebd6c  kebab-pcie2-no-runtime-pm.service
+1f20970c06a2a06dc03d94f3d4fa9dad4b071b689a687450d0eb3e3d61500beb3988e02aa27d7ddc14c64b47f6ab7ecf0a6613ea989028ad4a8e44029108e4f7  ucm-OnePlus-8T.conf
+0e18e6141bdf368b63bfd6a08a2f49d67b892380860dca0fa77a5a7190591eec9a70cb5c451bb6635b5ca97715b835671e846a6236860cf094d67bf6f385e4c3  ucm-HiFi.conf
+"

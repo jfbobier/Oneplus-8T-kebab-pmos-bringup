@@ -1,0 +1,43 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: kebab refactor <kebab@local.invalid>
+Date: Thu, 1 Oct 2026 15:02:40 +0200
+Subject: [PATCH] usb: typec: qcom: stop logging the no-op signal-transmit IRQ
+ as an error
+
+qcom_pmic_typec_pdphy_isr() handles PMIC_PDPHY_SIG_TX_IRQ by printing
+"isr: tx_sig" at error level and nothing else. The interrupt means the
+PHY finished transmitting a hard or cable reset -- a sequence TCPM asked
+for and whose completion it already tracks through tcpm_pd_transmit_
+complete() and its own timers. There is no error condition here and no
+recovery to perform.
+
+Partners that need several resets to negotiate therefore fill the log
+with error-level lines that say only that the hardware did as it was
+told, which hides the messages that do matter. Demote it to dev_dbg and
+record why the handler is empty.
+---
+ drivers/usb/typec/tcpm/qcom/qcom_pmic_typec_pdphy.c | 11 ++++++++++-
+ 1 file changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/usb/typec/tcpm/qcom/qcom_pmic_typec_pdphy.c b/drivers/usb/typec/tcpm/qcom/qcom_pmic_typec_pdphy.c
+index e6b28648f..526860b90 100644
+--- a/drivers/usb/typec/tcpm/qcom/qcom_pmic_typec_pdphy.c
++++ b/drivers/usb/typec/tcpm/qcom/qcom_pmic_typec_pdphy.c
+@@ -379,7 +379,16 @@ static irqreturn_t qcom_pmic_typec_pdphy_isr(int irq, void *dev_id)
+ 
+ 	switch (irq_data->virq) {
+ 	case PMIC_PDPHY_SIG_TX_IRQ:
+-		dev_err(dev, "isr: tx_sig\n");
++		/*
++		 * Raised when the PHY has finished putting a signal (hard or
++		 * cable reset) on the wire. TCPM drives those resets itself
++		 * and tracks their completion through its own state machine,
++		 * so there is nothing for this handler to do and nothing has
++		 * gone wrong -- the completion of a reset the stack asked for
++		 * is not an error. Logging it at error level buries real
++		 * failures whenever a partner needs a few resets to come up.
++		 */
++		dev_dbg(dev, "isr: tx_sig\n");
+ 		break;
+ 	case PMIC_PDPHY_SIG_RX_IRQ:
+ 		schedule_work(&pmic_typec_pdphy->reset_work);

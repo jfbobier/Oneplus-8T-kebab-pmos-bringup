@@ -1,0 +1,14 @@
+[Unit]
+Description=kebab: activate SDX55 primary-GW UIM provisioning session
+Documentation=see kebab-handoff-MODEM notes: automatic-provisioning NV items are absent
+After=mhi-efs-sync.service
+Before=ModemManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/kebab-uim-provision
+RemainAfterExit=yes
+TimeoutStartSec=180
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,68 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: kebab refactor <kebab@local.invalid>
+Date: Wed, 30 Sep 2026 01:38:46 +0200
+Subject: [PATCH] drm/msm/dp: don't apply the wide-bus pixel-clock halving to
+ link bandwidth
+
+msm_dp_bridge_mode_valid() halves mode_pclk_khz when wide bus or YUV420
+is in use and then reuses that halved value both for the controller's
+pixel-clock ceiling and for the link bandwidth check.
+
+Only the first is correct. Wide bus is a DPU-internal datapath width: it
+carries two pixels per clock so the datapath can run at half the rate.
+The DP link is unaffected -- every pixel still crosses the wire at the
+same rate. Using the halved clock for the bandwidth comparison makes the
+validator twice as optimistic as the hardware for every non-YUV420 mode,
+so modes that cannot fit are advertised, link training succeeds, and the
+sink shows a black screen with no error anywhere.
+
+Keep the original clock for msm_dp_panel_get_mode_bpp() and the
+mode_rate_khz computation.
+
+Observed on sm8250 (OnePlus 8T) with a 4K60 monitor over USB-C DP
+altmode.
+---
+ drivers/gpu/drm/msm/dp/dp_display.c | 15 +++++++++++++--
+ 1 file changed, 13 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/dp/dp_display.c b/drivers/gpu/drm/msm/dp/dp_display.c
+index dc6f33809..228993fd7 100644
+--- a/drivers/gpu/drm/msm/dp/dp_display.c
++++ b/drivers/gpu/drm/msm/dp/dp_display.c
+@@ -698,6 +698,7 @@ enum drm_mode_status msm_dp_bridge_mode_valid(struct drm_bridge *bridge,
+ 	u32 mode_rate_khz = 0, supported_rate_khz = 0, mode_bpp = 0;
+ 	struct msm_dp *dp;
+ 	int mode_pclk_khz = mode->clock;
++	int link_pclk_khz = mode->clock;
+ 
+ 	dp = to_dp_bridge(bridge)->msm_dp_display;
+ 
+@@ -709,6 +710,16 @@ enum drm_mode_status msm_dp_bridge_mode_valid(struct drm_bridge *bridge,
+ 	msm_dp_display = container_of(dp, struct msm_dp_display_private, msm_dp_display);
+ 	link_info = &msm_dp_display->panel->link_info;
+ 
++	/*
++	 * Wide bus halves the rate the DPU datapath runs at by carrying two
++	 * pixels per clock, so it applies to the controller's pixel-clock
++	 * ceiling checked just below. It does NOT halve what the DP link has
++	 * to carry: every pixel still crosses the wire. Keep the unhalved
++	 * clock for the link bandwidth arithmetic, or this validator is 2x
++	 * optimistic for every non-YUV420 mode and advertises modes the link
++	 * cannot drive -- link training then succeeds and the sink shows a
++	 * black screen.
++	 */
+ 	if ((drm_mode_is_420_only(&dp->connector->display_info, mode) &&
+ 	     msm_dp_display->panel->vsc_sdp_supported) ||
+ 	     msm_dp_wide_bus_available(dp))
+@@ -722,9 +733,9 @@ enum drm_mode_status msm_dp_bridge_mode_valid(struct drm_bridge *bridge,
+ 		mode_bpp = default_bpp;
+ 
+ 	mode_bpp = msm_dp_panel_get_mode_bpp(msm_dp_display->panel,
+-			mode_bpp, mode_pclk_khz);
++			mode_bpp, link_pclk_khz);
+ 
+-	mode_rate_khz = mode_pclk_khz * mode_bpp;
++	mode_rate_khz = link_pclk_khz * mode_bpp;
+ 	supported_rate_khz = link_info->num_lanes * link_info->rate * 8;
+ 
+ 	if (mode_rate_khz > supported_rate_khz)

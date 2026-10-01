@@ -1,0 +1,47 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: kebab refactor <kebab@local.invalid>
+Date: Wed, 30 Sep 2026 01:44:22 +0200
+Subject: [PATCH] OPTIONAL usb: typec: qcom: widen the vSafe5V poll tolerance
+
+NOT IN THE DEFAULT SERIES. Add it back only if "vbus vsafe5v fail"
+appears on every source attach again.
+
+The supported way to express a slow VBUS rail is to tell the regulator
+core about it, which the board does with
+regulator-enable-ramp-delay = <1200000> on the MP2762A boost, backed
+by the driver's own enable_time. regulator_enable() then returns only
+once the rail is really up and the 250 ms poll below succeeds on the
+first attach.
+
+Keep this as a fallback: it teaches a generic Qualcomm Type-C driver
+that all VBUS supplies might be slow, which is the wrong layer, but it
+does not depend on the regulator honouring its ramp delay.
+---
+ drivers/usb/typec/tcpm/qcom/qcom_pmic_typec_port.c | 11 +++++++++--
+ 1 file changed, 9 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/usb/typec/tcpm/qcom/qcom_pmic_typec_port.c b/drivers/usb/typec/tcpm/qcom/qcom_pmic_typec_port.c
+index bf985efe1..02d332f9d 100644
+--- a/drivers/usb/typec/tcpm/qcom/qcom_pmic_typec_port.c
++++ b/drivers/usb/typec/tcpm/qcom/qcom_pmic_typec_port.c
+@@ -310,11 +310,18 @@ static int qcom_pmic_typec_port_vbus_toggle(struct pmic_typec_port *pmic_typec_p
+ 		val = TYPEC_SM_VBUS_VSAFE0V;
+ 	}
+ 
+-	/* Poll waiting for transition to required vSafe5V or vSafe0V */
++	/*
++	 * Poll waiting for transition to required vSafe5V or vSafe0V.
++	 *
++	 * 250 ms is the Type-C tSrcTurnOn budget, but a boost converter on a
++	 * multi-cell pack can take far longer: measured between 550 ms and
++	 * ~1.1 s on this board. The poll exits the moment the bit is set, so
++	 * a longer tolerance costs nothing when VBUS is quick.
++	 */
+ 	ret = regmap_read_poll_timeout(pmic_typec_port->regmap,
+ 				       pmic_typec_port->base + TYPEC_SM_STATUS_REG,
+ 				       sm_stat, sm_stat & val,
+-				       100, 250000);
++				       100, 1200000);
+ 	if (ret)
+ 		dev_warn(pmic_typec_port->dev, "vbus vsafe%dv fail\n", on ? 5 : 0);
+ 

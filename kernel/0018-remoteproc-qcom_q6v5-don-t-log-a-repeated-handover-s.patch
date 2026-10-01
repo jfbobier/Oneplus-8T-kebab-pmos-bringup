@@ -1,0 +1,40 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: kebab refactor <kebab@local.invalid>
+Date: Thu, 1 Oct 2026 15:03:14 +0200
+Subject: [PATCH] remoteproc: qcom_q6v5: don't log a repeated handover signal
+ as an error
+
+q6v5_handover_interrupt() returns early when handover has already been
+issued, after printing at error level. On some SoCs the subsystem keeps
+asserting the sideband after the fact -- the SLPI on sm8250 raised it
+766 times in a single session on an OnePlus 8T -- so an otherwise
+healthy boot logs hundreds of identical error lines.
+
+The early return is the correct and complete response: the handover
+callback has run, interconnect bandwidth has been dropped, and nothing
+is retried. Demote the message so it stays available for tracing
+without reporting a fault that is not there.
+---
+ drivers/remoteproc/qcom_q6v5.c | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/remoteproc/qcom_q6v5.c b/drivers/remoteproc/qcom_q6v5.c
+index 58d5b85e5..37001b6ea 100644
+--- a/drivers/remoteproc/qcom_q6v5.c
++++ b/drivers/remoteproc/qcom_q6v5.c
+@@ -165,7 +165,14 @@ static irqreturn_t q6v5_handover_interrupt(int irq, void *data)
+ 	struct qcom_q6v5 *q6v5 = data;
+ 
+ 	if (q6v5->handover_issued) {
+-		dev_err(q6v5->dev, "Handover signaled, but it already happened\n");
++		/*
++		 * Not an error. On some SoCs the subsystem keeps asserting
++		 * this sideband after handover has already been issued -- the
++		 * SLPI on sm8250 produced 766 identical lines in one session
++		 * here. There is nothing to do and nothing is retried, so
++		 * returning early is the whole of the correct response.
++		 */
++		dev_dbg(q6v5->dev, "Handover signaled, but it already happened\n");
+ 		return IRQ_HANDLED;
+ 	}
+ 

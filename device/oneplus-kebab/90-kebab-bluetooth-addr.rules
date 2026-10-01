@@ -1,0 +1,5 @@
+# The QCA6390 registers HCI_UNCONFIGURED because its firmware carries the
+# placeholder address 00:00:00:00:5A:AD. Assign a stable per-device address
+# instead of baking one constant into the devicetree.
+ACTION=="add", SUBSYSTEM=="bluetooth", KERNEL=="hci[0-9]*", \
+	TAG+="systemd", ENV{SYSTEMD_WANTS}+="kebab-bluetooth-addr@%k.service"

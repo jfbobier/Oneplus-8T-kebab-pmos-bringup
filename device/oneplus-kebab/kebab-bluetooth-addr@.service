@@ -1,0 +1,15 @@
+[Unit]
+Description=Assign a per-device Bluetooth address to %I
+Documentation=man:btmgmt(1)
+Before=bluetooth.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# btmgmt is in /usr/sbin, which is not in systemd's default PATH. The script
+# searches absolute paths itself; this is belt and braces.
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# The script polls for the controller itself, so this deliberately does not
+# bind to a .device unit: a missing device unit would fail the job rather
+# than skip it.
+ExecStart=/usr/bin/kebab-bluetooth-addr %I

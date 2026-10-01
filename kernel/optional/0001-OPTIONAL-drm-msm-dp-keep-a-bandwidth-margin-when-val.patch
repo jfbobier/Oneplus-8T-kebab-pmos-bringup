@@ -1,0 +1,92 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: kebab refactor <kebab@local.invalid>
+Date: Wed, 30 Sep 2026 01:44:22 +0200
+Subject: [PATCH] OPTIONAL drm/msm/dp: keep a bandwidth margin when validating
+ DP modes
+
+NOT IN THE DEFAULT SERIES. Add it back only if a DisplayPort sink
+trains successfully and then shows nothing, or shows a black screen at
+its native mode.
+
+lanes * rate * 8 is the raw 8b/10b payload rate. It does not account
+for transfer-unit stuffing, MSA or secondary-data packets, so a mode
+validated against it exactly has no headroom. Measured on this board a
+stream at 93% of that figure trains and delivers no frames, 89% gives
+a black screen, and 75% is solid.
+
+This was written before the wide-bus validation fix ("drm/msm/dp:
+don't apply the wide-bus pixel-clock halving to link bandwidth"), which
+removed a 2x optimism in the same calculation. Retest without this
+patch first: the margin may have been compensating for that bug.
+
+Also refuses modes that would need fewer than 8 bits per component,
+which is a separate policy choice bundled here because it only makes
+sense alongside the margin.
+---
+ drivers/gpu/drm/msm/dp/dp_display.c | 11 ++++++++++-
+ drivers/gpu/drm/msm/dp/dp_panel.c   |  3 ++-
+ drivers/gpu/drm/msm/dp/dp_panel.h   | 11 +++++++++++
+ 3 files changed, 23 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/dp/dp_display.c b/drivers/gpu/drm/msm/dp/dp_display.c
+index 228993fd7..3c9f22da6 100644
+--- a/drivers/gpu/drm/msm/dp/dp_display.c
++++ b/drivers/gpu/drm/msm/dp/dp_display.c
+@@ -736,11 +736,20 @@ enum drm_mode_status msm_dp_bridge_mode_valid(struct drm_bridge *bridge,
+ 			mode_bpp, link_pclk_khz);
+ 
+ 	mode_rate_khz = link_pclk_khz * mode_bpp;
+-	supported_rate_khz = link_info->num_lanes * link_info->rate * 8;
++	supported_rate_khz = mult_frac(link_info->num_lanes * link_info->rate * 8,
++				       DP_LINK_BW_MARGIN_PCT, 100);
+ 
+ 	if (mode_rate_khz > supported_rate_khz)
+ 		return MODE_BAD;
+ 
++	/*
++	 * Only advertise a mode if it fits at 8 bpc or better. Falling back
++	 * to 6-bit colour to squeeze a high mode onto a narrow link looks
++	 * worse than offering the same resolution at a lower refresh rate.
++	 */
++	if (mode_bpp < 24)
++		return MODE_BAD;
++
+ 	return MODE_OK;
+ }
+ 
+diff --git a/drivers/gpu/drm/msm/dp/dp_panel.c b/drivers/gpu/drm/msm/dp/dp_panel.c
+index 6bb021820..896014067 100644
+--- a/drivers/gpu/drm/msm/dp/dp_panel.c
++++ b/drivers/gpu/drm/msm/dp/dp_panel.c
+@@ -221,7 +221,8 @@ static u32 msm_dp_panel_get_supported_bpp(struct msm_dp_panel *msm_dp_panel,
+ 	bpp = min(mode_edid_bpp, max_supported_bpp);
+ 
+ 	link_info = &msm_dp_panel->link_info;
+-	data_rate_khz = link_info->num_lanes * link_info->rate * 8;
++	data_rate_khz = mult_frac(link_info->num_lanes * link_info->rate * 8,
++				  DP_LINK_BW_MARGIN_PCT, 100);
+ 
+ 	do {
+ 		if (mode_pclk_khz * bpp <= data_rate_khz)
+diff --git a/drivers/gpu/drm/msm/dp/dp_panel.h b/drivers/gpu/drm/msm/dp/dp_panel.h
+index 9173e90a5..fed7405ba 100644
+--- a/drivers/gpu/drm/msm/dp/dp_panel.h
++++ b/drivers/gpu/drm/msm/dp/dp_panel.h
+@@ -27,6 +27,17 @@ struct msm_dp_panel_psr {
+ 	u8 capabilities;
+ };
+ 
++/*
++ * Fraction of the raw 8b/10b link payload a video stream may occupy.
++ *
++ * lanes * rate * 8 is the payload before transfer-unit stuffing, MSA and
++ * secondary-data packets are accounted for, so a mode sized against it has
++ * no headroom at all. Measured on sm8250 (OnePlus 8T): a stream at 93% of
++ * that figure trains and then delivers no frames, 89% gives a black screen,
++ * 75% is solid.
++ */
++#define DP_LINK_BW_MARGIN_PCT	85
++
+ struct msm_dp_panel {
+ 	/* dpcd raw data */
+ 	u8 dpcd[DP_RECEIVER_CAP_SIZE];

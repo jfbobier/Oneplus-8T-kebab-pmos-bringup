@@ -1,0 +1,1959 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * OnePlus 8T (kebab / KB2003) — SM8250 + discrete SDX55 modem.
+ *
+ * Consolidated board description. This single file replaces the ~45
+ * incremental device-tree patches produced during bring-up; see
+ * docs/REFACTOR.md for the patch-to-section mapping and docs/REGRESSIONS.md
+ * for what was intentionally dropped and how to put it back.
+ *
+ * Derived from arch/arm64/boot/dts/qcom/sm8250-oneplus-kebab.dts as shipped
+ * in linux-postmarketos-qcom-sm8250 tag sm8250-7.2.0. Run
+ * scripts/check-dts-drift.sh after a kernel bump to see what upstream
+ * changed underneath this file.
+ *
+ * Copyright (c) 2022, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2024, Frieder Hannenheim
+ * Copyright (c) 2026, kebab bring-up
+ */
+
+/dts-v1/;
+
+#include <dt-bindings/arm/qcom,ids.h>
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/media/video-interfaces.h>
+#include <dt-bindings/phy/phy.h>
+#include <dt-bindings/regulator/qcom,rpmh-regulator.h>
+#include <dt-bindings/sound/qcom,q6afe.h>
+#include <dt-bindings/sound/qcom,q6asm.h>
+#include <dt-bindings/usb/pd.h>
+
+#include "sm8250.dtsi"
+#include "pm8150.dtsi"
+#include "pm8150b.dtsi"
+#include "pm8150l.dtsi"
+
+/*
+ * pm8009.dtsi is deliberately NOT included.
+ *
+ * The PMIC is declared by the vendor tree but is not populated on this
+ * board: every SPMI register read to sid 0xa / 0xb fails with
+ * "transaction failed (0x3)", and RPMh cmd-db has no smpf2 resource, so
+ * its rpmh-regulator block ("regulators-0", qcom,pmic-id = "f") cannot
+ * register either. Nothing on kebab consumes an f-series rail — the
+ * QCA6390 PMU was moved onto vreg_s6a_0p95 for exactly this reason.
+ *
+ * Omitting the include is equivalent to, and cleaner than, instantiating
+ * pmic@a / pmic@b and then disabling them.
+ */
+
+/*
+ * Delete the upstream (sm8250.dtsi) reserved-memory mappings that differ on
+ * this device; they are redefined below.
+ */
+/delete-node/ &removed_mem;
+/delete-node/ &camera_mem;
+/delete-node/ &wlan_mem;
+/delete-node/ &ipa_fw_mem;
+/delete-node/ &ipa_gsi_mem;
+/delete-node/ &gpu_mem;
+/delete-node/ &npu_mem;
+/delete-node/ &video_mem;
+/delete-node/ &cvp_mem;
+/delete-node/ &cdsp_mem;
+/delete-node/ &slpi_mem;
+/delete-node/ &adsp_mem;
+/delete-node/ &spss_mem;
+/delete-node/ &cdsp_secure_heap;
+
+/ {
+	model = "OnePlus 8T";
+	compatible = "oneplus,kebab", "qcom,sm8250";
+	chassis-type = "handset";
+
+	qcom,msm-id = <0x164 0x10000>, <0x164 0x20001>;
+	qcom,board-id = <0x08 0x00>, <0x00 0x00>;
+
+	aliases {
+		serial0 = &uart6;
+	};
+
+	chosen {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+		stdout-path = "framebuffer0";
+
+		/*
+		 * Disabled: msm DRM owns this memory once the real DSI panel
+		 * comes up. Leaving simple-framebuffer enabled makes both
+		 * drivers claim 0x9c000000 and produces "framebuffer is not in
+		 * virtual address space" warnings.
+		 */
+		framebuffer0: framebuffer@9c000000 {
+			compatible = "simple-framebuffer";
+			reg = <0x0 0x9c000000 0x0 (1080 * 2376 * 4)>;
+			width = <1080>;
+			height = <2376>;
+			stride = <(1080 * 4)>;
+			format = "a8r8g8b8";
+			status = "disabled";
+		};
+	};
+
+	gpio_keys: gpio-keys {
+		compatible = "gpio-keys";
+
+		vol-up {
+			label = "Volume Up";
+			gpios = <&pm8150_gpios 6 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_VOLUMEUP>;
+			debounce-interval = <15>;
+			linux,can-disable;
+			gpio-key,wakeup;
+		};
+
+		vol-down {
+			label = "Volume Down";
+			gpios = <&pm8150_gpios 7 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_VOLUMEDOWN>;
+			debounce-interval = <15>;
+			linux,can-disable;
+			gpio-key,wakeup;
+		};
+	};
+
+	reserved-memory {
+		camera_mem: memory@8dc00000 {
+			reg = <0x0 0x8dc00000 0x0 0x500000>;
+			no-map;
+		};
+
+		wlan_mem: memory@8e100000 {
+			reg = <0x0 0x8e100000 0x0 0x100000>;
+			no-map;
+		};
+
+		ipa_fw_mem: memory@8e200000 {
+			reg = <0x0 0x8e200000 0x0 0x10000>;
+			no-map;
+		};
+
+		ipa_gsi_mem: memory@8e210000 {
+			reg = <0x0 0x8e210000 0x0 0xa000>;
+			no-map;
+		};
+
+		gpu_mem: memory@8e21a000 {
+			reg = <0x0 0x8e21a000 0x0 0x2000>;
+			no-map;
+		};
+
+		npu_mem: memory@8e300000 {
+			reg = <0x0 0x8e300000 0x0 0x500000>;
+			no-map;
+		};
+
+		video_mem: memory@8e800000 {
+			reg = <0x0 0x8e800000 0x0 0x500000>;
+			no-map;
+		};
+
+		cvp_mem: memory@8ed00000 {
+			reg = <0x0 0x8ed00000 0x0 0x500000>;
+			no-map;
+		};
+
+		cdsp_mem: memory@8f200000 {
+			reg = <0x0 0x8f200000 0x0 0x1400000>;
+			no-map;
+		};
+
+		slpi_mem: memory@90600000 {
+			reg = <0x0 0x90600000 0x0 0x1500000>;
+			no-map;
+		};
+
+		adsp_mem: memory@91b00000 {
+			reg = <0x00 0x91b00000 0x00 0x2500000>;
+			no-map;
+		};
+
+		spss_mem: memory@94000000 {
+			reg = <0x0 0x94000000 0x0 0x100000>;
+			no-map;
+		};
+
+		cdsp_secure_heap: memory@94100000 {
+			reg = <0x0 0x94100000 0x0 0x4600000>;
+			no-map;
+		};
+
+		cont_splash_mem: memory@9c000000 {
+			reg = <0x0 0x9c000000 0x0 0x2300000>;
+			no-map;
+		};
+
+		/*
+		 * OPTIONAL — development aid, safe to delete.
+		 *
+		 * pstore/ramoops in a region the bootloader leaves alone, so a
+		 * panic or a silent SoC reset survives the reboot and can be
+		 * read back from /sys/fs/pstore. ECC is on because this region
+		 * is not refresh-protected across the reset.
+		 *
+		 * Keeping this enabled is a deliberate choice for a board still
+		 * under bring-up: several of the changes in this tree were
+		 * diagnosed only because the previous boot's log survived.
+		 */
+		ramoops@b0000000 {
+			compatible = "ramoops";
+			reg = <0x00 0xb0000000 0x00 0x400000>;
+			record-size = <0x40000>;
+			console-size = <0x200000>;
+			ecc-size = <16>;
+			no-map;
+		};
+	};
+
+	battery: battery {
+		compatible = "simple-battery";
+
+		charge-full-design-microamp-hours = <4410000>;
+		energy-full-design-microwatt-hours = <17060000>;
+		voltage-max-design-microvolt = <4350000>;
+	};
+
+	vph_pwr: vph-pwr-regulator {
+		compatible = "regulator-fixed";
+		regulator-name = "vph_pwr";
+		regulator-min-microvolt = <3700000>;
+		regulator-max-microvolt = <3700000>;
+	};
+
+	vreg_s6c_0p88: smpc6-regulator {
+		compatible = "regulator-fixed";
+		regulator-name = "vreg_s6c_0p88";
+		regulator-min-microvolt = <880000>;
+		regulator-max-microvolt = <880000>;
+		regulator-always-on;
+		vin-supply = <&vph_pwr>;
+	};
+
+	vreg_s4a_1p8: vreg-s4a-1p8 {
+		compatible = "regulator-fixed";
+		regulator-name = "vreg_s4a_1p8";
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <1800000>;
+		regulator-always-on;
+	};
+};
+
+/* ------------------------------------------------------------------------
+ * RPMh regulators
+ *
+ * "regulators-0" (pm8009, qcom,pmic-id "f") is absent — see the note about
+ * the pm8009.dtsi include above.
+ * ------------------------------------------------------------------------ */
+
+&apps_rsc {
+	regulators-1 {
+		compatible = "qcom,pm8150-rpmh-regulators";
+		qcom,pmic-id = "a";
+
+		vdd-s1-supply = <&vph_pwr>;
+		vdd-s2-supply = <&vph_pwr>;
+		vdd-s3-supply = <&vph_pwr>;
+		vdd-s4-supply = <&vph_pwr>;
+		vdd-s5-supply = <&vph_pwr>;
+		vdd-s6-supply = <&vph_pwr>;
+		vdd-s7-supply = <&vph_pwr>;
+		vdd-s8-supply = <&vph_pwr>;
+		vdd-s9-supply = <&vph_pwr>;
+		vdd-s10-supply = <&vph_pwr>;
+		vdd-l2-l10-supply = <&vreg_bob>;
+		vdd-l3-l4-l5-l18-supply = <&vreg_s6a_0p95>;
+		vdd-l6-l9-supply = <&vreg_s8c_1p3>;
+		vdd-l7-l12-l14-l15-supply = <&vreg_s5a_1p9>;
+		vdd-l13-l16-l17-supply = <&vreg_bob>;
+
+		vreg_l2a_3p1: ldo2 {
+			regulator-name = "vreg_l2a_3p1";
+			regulator-min-microvolt = <3072000>;
+			regulator-max-microvolt = <3072000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l3a_0p9: ldo3 {
+			regulator-name = "vreg_l3a_0p9";
+			regulator-min-microvolt = <928000>;
+			regulator-max-microvolt = <932000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l5a_0p88: ldo5 {
+			regulator-name = "vreg_l5a_0p88";
+			regulator-min-microvolt = <880000>;
+			regulator-max-microvolt = <880000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l6a_1p2: ldo6 {
+			regulator-name = "vreg_l6a_1p2";
+			regulator-min-microvolt = <1200000>;
+			regulator-max-microvolt = <1200000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l7a_1p7: ldo7 {
+			regulator-name = "vreg_l7a_1p7";
+			regulator-min-microvolt = <1704000>;
+			regulator-max-microvolt = <1800000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l9a_1p2: ldo9 {
+			regulator-name = "vreg_l9a_1p2";
+			regulator-min-microvolt = <1200000>;
+			regulator-max-microvolt = <1200000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l10a_1p8: ldo10 {
+			regulator-name = "vreg_l10a_1p8";
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1800000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l12a_1p8: ldo12 {
+			regulator-name = "vreg_l12a_1p8";
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1800000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l13a_ts_3p0: ldo13 {
+			regulator-name = "vreg_l13a_ts_3p0";
+			regulator-min-microvolt = <3008000>;
+			regulator-max-microvolt = <3008000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l14a_1p8: ldo14 {
+			regulator-name = "vreg_l14a_1p8";
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1880000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l15a_1p8: ldo15 {
+			regulator-name = "vreg_l15a_1p8";
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1800000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l16a_2p7: ldo16 {
+			regulator-name = "vreg_l16a_2p7";
+			regulator-min-microvolt = <2704000>;
+			regulator-max-microvolt = <2960000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l17a_3p0: ldo17 {
+			regulator-name = "vreg_l17a_3p0";
+			regulator-min-microvolt = <2856000>;
+			regulator-max-microvolt = <3008000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l18a_0p92: ldo18 {
+			regulator-name = "vreg_l18a_0p92";
+			regulator-min-microvolt = <800000>;
+			regulator-max-microvolt = <912000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_s5a_1p9: smps5 {
+			regulator-name = "vreg_s5a_1p9";
+			regulator-min-microvolt = <1904000>;
+			regulator-max-microvolt = <2000000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_s6a_0p95: smps6 {
+			regulator-name = "vreg_s6a_0p95";
+			regulator-min-microvolt = <920000>;
+			regulator-max-microvolt = <1128000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+	};
+
+	regulators-2 {
+		compatible = "qcom,pm8150l-rpmh-regulators";
+		qcom,pmic-id = "c";
+
+		vdd-s1-supply = <&vph_pwr>;
+		vdd-s2-supply = <&vph_pwr>;
+		vdd-s3-supply = <&vph_pwr>;
+		vdd-s4-supply = <&vph_pwr>;
+		vdd-s5-supply = <&vph_pwr>;
+		vdd-s6-supply = <&vph_pwr>;
+		vdd-s7-supply = <&vph_pwr>;
+		vdd-s8-supply = <&vph_pwr>;
+		vdd-l1-l8-supply = <&vreg_s4a_1p8>;
+		vdd-l2-l3-supply = <&vreg_s8c_1p3>;
+		vdd-l4-l5-l6-supply = <&vreg_bob>;
+		vdd-l7-l11-supply = <&vreg_bob>;
+		vdd-l9-l10-supply = <&vreg_bob>;
+		vdd-bob-supply = <&vph_pwr>;
+
+		vreg_bob: bob {
+			regulator-name = "vreg_bob";
+			/*
+			 * 3.3 V floor, not the 3008000 the other SM8250 boards
+			 * use. BOB feeds the WCD9385 vdd-mic-bias input, and
+			 * mainline wcd938x only bulk-enables its supplies —
+			 * it never requests a voltage, so BOB parks at this
+			 * minimum. The vendor configuration specifies more:
+			 * OnePlus's kebab-oem.dtsi sets
+			 * qcom,cdc-vdd-mic-bias-voltage = <3300000 3600000>
+			 * and Qualcomm's kona-audio-overlay.dtsi uses
+			 * <3296000 3296000>. Give the micbias generator the
+			 * headroom the analogue mic design assumes.
+			 */
+			regulator-min-microvolt = <3300000>;
+			regulator-max-microvolt = <4000000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_AUTO>;
+		};
+
+		vreg_l1c_1p8: ldo1 {
+			regulator-name = "vreg_l1c_1p8";
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1800000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l2c_1p2: ldo2 {
+			regulator-name = "vreg_l2c_1p2";
+			regulator-min-microvolt = <1200000>;
+			regulator-max-microvolt = <1200000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l3c_0p8: ldo3 {
+			regulator-name = "vreg_l3c_0p8";
+			regulator-min-microvolt = <800000>;
+			regulator-max-microvolt = <800000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l4c_1p7: ldo4 {
+			regulator-name = "vreg_l4c_1p7";
+			regulator-min-microvolt = <1704000>;
+			regulator-max-microvolt = <2928000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l5c_1p8: ldo5 {
+			regulator-name = "vreg_l5c_1p8";
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <2928000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l6c_2p96: ldo6 {
+			regulator-name = "vreg_l6c_2p96";
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <2960000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l7c_cam_vcm0_2p85: ldo7 {
+			regulator-name = "vreg_l7c_cam_vcm0_2p85";
+			regulator-min-microvolt = <2856000>;
+			regulator-max-microvolt = <3104000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l8c_1p8: ldo8 {
+			regulator-name = "vreg_l8c_1p8";
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1800000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l9c_2p96: ldo9 {
+			regulator-name = "vreg_l9c_2p96";
+			regulator-min-microvolt = <2704000>;
+			regulator-max-microvolt = <2960000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l10c_3p0: ldo10 {
+			regulator-name = "vreg_l10c_3p0";
+			regulator-min-microvolt = <3000000>;
+			regulator-max-microvolt = <3000000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l11c_3p3: ldo11 {
+			regulator-name = "vreg_l11c_3p3";
+			regulator-min-microvolt = <3296000>;
+			regulator-max-microvolt = <3296000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+			regulator-always-on;
+		};
+
+		vreg_s8c_1p3: smps8 {
+			regulator-name = "vreg_s8c_1p3";
+			regulator-min-microvolt = <1352000>;
+			regulator-max-microvolt = <1352000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+	};
+};
+
+/* ------------------------------------------------------------------------
+ * Core SoC blocks
+ * ------------------------------------------------------------------------ */
+
+&adsp {
+	firmware-name = "postmarketos/adsp.mbn";
+	status = "okay";
+};
+
+&cdsp {
+	firmware-name = "postmarketos/cdsp.mbn";
+	status = "okay";
+};
+
+&slpi {
+	firmware-name = "postmarketos/slpi.mbn";
+	status = "okay";
+};
+
+&venus {
+	firmware-name = "postmarketos/venus.mbn";
+	status = "okay";
+};
+
+&gpi_dma0 {
+	status = "okay";
+};
+
+&gpi_dma1 {
+	status = "okay";
+};
+
+&gpi_dma2 {
+	status = "okay";
+};
+
+&qupv3_id_0 {
+	status = "okay";
+};
+
+&qupv3_id_1 {
+	status = "okay";
+};
+
+&qupv3_id_2 {
+	status = "okay";
+};
+
+&qup_spi4_cs_gpio {
+	drive-strength = <6>;
+	bias-disable;
+};
+
+&qup_spi4_data_clk {
+	drive-strength = <6>;
+	bias-disable;
+};
+
+&pon_pwrkey {
+	status = "okay";
+};
+
+&pon_resin {
+	linux,code = <KEY_VOLUMEDOWN>;
+	status = "okay";
+};
+
+&ufs_mem_hc {
+	vcc-supply = <&vreg_l17a_3p0>;
+	vcc-max-microamp = <800000>;
+	vccq-supply = <&vreg_l6a_1p2>;
+	vccq-max-microamp = <800000>;
+	vccq2-supply = <&vreg_s4a_1p8>;
+	vccq2-max-microamp = <800000>;
+	status = "okay";
+};
+
+&ufs_mem_phy {
+	vdda-phy-supply = <&vreg_l5a_0p88>;
+	vdda-pll-supply = <&vreg_l9a_1p2>;
+	status = "okay";
+};
+
+/* NFC: NXP NCI. Needs pcie1 disabled so GPIO_83 is free — see the PCIe
+ * section below. */
+&i2c1 {
+	status = "okay";
+
+	nfc@28 {
+		compatible = "nxp,nxp-nci-i2c";
+		reg = <0x28>;
+
+		interrupt-parent = <&tlmm>;
+		interrupts = <0x6f IRQ_TYPE_LEVEL_HIGH>;
+
+		enable-gpios = <&tlmm 83 GPIO_ACTIVE_HIGH>,
+			       <&tlmm 110 GPIO_ACTIVE_HIGH>;
+	};
+};
+
+&i2c16 {
+	status = "okay";
+
+	smart_battery: fuel-gauge@55 {
+		compatible = "ti,bq27541";
+		reg = <0x55>;
+		monitored-battery = <&battery>;
+	};
+};
+
+/* ------------------------------------------------------------------------
+ * Display — DSI0 + Samsung AMB655X panel, Adreno 650
+ *
+ * The vendor-derived kebab dts carried "&dispcc { status = "disabled"; }".
+ * dispcc is the display clock controller: with it disabled, mdss, the DPU,
+ * the DSI controller and the DSI PHY can never resolve their clocks, so
+ * none of them probe whatever their own status says. It is simply absent
+ * here rather than re-enabled.
+ * ------------------------------------------------------------------------ */
+
+&mdss {
+	status = "okay";
+};
+
+&mdss_dsi0 {
+	vdda-supply = <&vreg_l9a_1p2>;
+	status = "okay";
+
+	display_panel: panel@0 {
+		compatible = "samsung,amb655x";
+		reg = <0>;
+
+		vddio-supply = <&vreg_l14a_1p8>;
+		reset-gpios = <&tlmm 75 GPIO_ACTIVE_LOW>;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&panel_reset_pins>, <&panel_vsync_pins>,
+			    <&panel_vout_pins>;
+
+		ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			port@0 {
+				reg = <0>;
+
+				panel_in_0: endpoint {
+					remote-endpoint = <&mdss_dsi0_out>;
+				};
+			};
+		};
+	};
+};
+
+&mdss_dsi0_out {
+	data-lanes = <0 1 2 3>;
+	remote-endpoint = <&panel_in_0>;
+};
+
+&mdss_dsi0_phy {
+	vdds-supply = <&vreg_l5a_0p88>;
+	status = "okay";
+};
+
+&gmu {
+	status = "okay";
+};
+
+/* Without this msm_dpu reports "no GPU device was found" and the desktop
+ * falls back to llvmpipe. */
+&gpu {
+	status = "okay";
+};
+
+/* ------------------------------------------------------------------------
+ * Touchscreen — Synaptics S3908
+ *
+ * The node inherited from the OnePlus 8 Pro declares a Samsung s6sy761 at
+ * 0x48. The 8T has a Synaptics S3908 at 0x4b on the same bus; the whole
+ * i2c13 node is written out here rather than patched, so no phantom client
+ * is ever created.
+ * ------------------------------------------------------------------------ */
+
+&i2c13 {
+	clock-frequency = <400000>;
+	status = "okay";
+
+	touchscreen@4b {
+		compatible = "syna,s3908";
+		reg = <0x4b>;
+
+		interrupt-parent = <&tlmm>;
+		interrupts = <39 IRQ_TYPE_LEVEL_LOW>;
+
+		reset-gpios = <&tlmm 38 GPIO_ACTIVE_HIGH>;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&ts_int_active>;
+
+		vdd-supply = <&vreg_l13a_ts_3p0>;
+		vcc-supply = <&vreg_l1c_1p8>;
+		vdd_volt = <3008000>;
+
+		max-objects = <10>;
+	};
+};
+
+/* ------------------------------------------------------------------------
+ * Wi-Fi / Bluetooth — Qualcomm QCA6390 on PCIe0 + UART6
+ *
+ * The vendor-derived tree declared a "qcom,qca6390" node with
+ * #power-domain-cells and had pcie0_phy and the bluetooth node consume it
+ * as a power domain. No mainline driver binds that compatible, so the PHY
+ * timed out (-110) and pcie0 never probed.
+ *
+ * Mainline drives this chip through drivers/power/sequencing/
+ * pwrseq-qcom-wcn.c matching "qcom,qca6390-pmu". The PMU exposes ten named
+ * regulators; the WLAN endpoint under the PCIe root port and the Bluetooth
+ * serdev node consume those directly.
+ *
+ * NOTE ON THE BLUETOOTH ADDRESS. htnv20.bin ships the placeholder
+ * 00:00:00:00:5A:AD, so hci0 comes up HCI_UNCONFIGURED ("DOWN RAW",
+ * "Can't init device hci0: Not supported (95)"). This is deliberately NOT
+ * papered over with a hard-coded local-bd-address here: one constant
+ * baked into the devicetree is the same address on every kebab. The
+ * address is assigned per device at boot from /etc/machine-id by
+ * kebab-bluetooth-addr.service (see device/oneplus-kebab/). If that path
+ * ever fails, docs/REGRESSIONS.md item BT-1 has the devicetree fallback.
+ * ------------------------------------------------------------------------ */
+
+/ {
+	qca6390_pmu: qca6390-pmu {
+		compatible = "qcom,qca6390-pmu";
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&bt_en_active>, <&wlan_en_active>;
+
+		vddaon-supply = <&vreg_s6a_0p95>;
+		vddpmu-supply = <&vreg_s6a_0p95>;
+		vddrfa0p95-supply = <&vreg_s6a_0p95>;
+		vddrfa1p3-supply = <&vreg_s8c_1p3>;
+		vddrfa1p9-supply = <&vreg_s5a_1p9>;
+		vddpcie1p3-supply = <&vreg_s8c_1p3>;
+		vddpcie1p9-supply = <&vreg_s5a_1p9>;
+		vddio-supply = <&vreg_s4a_1p8>;
+
+		wlan-enable-gpios = <&tlmm 20 GPIO_ACTIVE_HIGH>;
+		bt-enable-gpios = <&tlmm 21 GPIO_ACTIVE_HIGH>;
+
+		regulators {
+			vreg_pmu_rfa_cmn: ldo0 {
+				regulator-name = "vreg_pmu_rfa_cmn";
+			};
+
+			vreg_pmu_aon_0p59: ldo1 {
+				regulator-name = "vreg_pmu_aon_0p59";
+			};
+
+			vreg_pmu_wlcx_0p8: ldo2 {
+				regulator-name = "vreg_pmu_wlcx_0p8";
+			};
+
+			vreg_pmu_wlmx_0p85: ldo3 {
+				regulator-name = "vreg_pmu_wlmx_0p85";
+			};
+
+			vreg_pmu_btcmx_0p85: ldo4 {
+				regulator-name = "vreg_pmu_btcmx_0p85";
+			};
+
+			vreg_pmu_rfa_0p8: ldo5 {
+				regulator-name = "vreg_pmu_rfa_0p8";
+			};
+
+			vreg_pmu_rfa_1p2: ldo6 {
+				regulator-name = "vreg_pmu_rfa_1p2";
+			};
+
+			vreg_pmu_rfa_1p7: ldo7 {
+				regulator-name = "vreg_pmu_rfa_1p7";
+			};
+
+			vreg_pmu_pcie_0p9: ldo8 {
+				regulator-name = "vreg_pmu_pcie_0p9";
+			};
+
+			vreg_pmu_pcie_1p8: ldo9 {
+				regulator-name = "vreg_pmu_pcie_1p8";
+			};
+		};
+	};
+};
+
+&pcie0 {
+	status = "okay";
+};
+
+&pcie0_phy {
+	vdda-phy-supply = <&vreg_l5a_0p88>;
+	vdda-pll-supply = <&vreg_l9a_1p2>;
+	status = "okay";
+};
+
+&pcieport0 {
+	wifi@0 {
+		compatible = "pci17cb,1101";
+		reg = <0x10000 0x0 0x0 0x0 0x0>;
+
+		vddrfacmn-supply = <&vreg_pmu_rfa_cmn>;
+		vddaon-supply = <&vreg_pmu_aon_0p59>;
+		vddwlcx-supply = <&vreg_pmu_wlcx_0p8>;
+		vddwlmx-supply = <&vreg_pmu_wlmx_0p85>;
+		vddrfa0p8-supply = <&vreg_pmu_rfa_0p8>;
+		vddrfa1p2-supply = <&vreg_pmu_rfa_1p2>;
+		vddrfa1p7-supply = <&vreg_pmu_rfa_1p7>;
+		vddpcie0p9-supply = <&vreg_pmu_pcie_0p9>;
+		vddpcie1p8-supply = <&vreg_pmu_pcie_1p8>;
+	};
+};
+
+&uart6 {
+	status = "okay";
+
+	bluetooth {
+		compatible = "qcom,qca6390-bt";
+
+		vddrfacmn-supply = <&vreg_pmu_rfa_cmn>;
+		vddaon-supply = <&vreg_pmu_aon_0p59>;
+		vddbtcmx-supply = <&vreg_pmu_btcmx_0p85>;
+		vddrfa0p8-supply = <&vreg_pmu_rfa_0p8>;
+		vddrfa1p2-supply = <&vreg_pmu_rfa_1p2>;
+		vddrfa1p7-supply = <&vreg_pmu_rfa_1p7>;
+	};
+};
+
+/*
+ * pcie1 has no endpoint on this board — it reports "Device not found" —
+ * but its pinctrl claims GPIO_83, which the NFC controller needs for its
+ * enable line:
+ *
+ *   sm8250-pinctrl f100000.pinctrl: pin GPIO_83 already requested by
+ *       1c08000.pcie; cannot claim for f100000.pinctrl:629
+ *   nxp-nci_i2c 1-0028: NFC: Failed to get EN gpio
+ */
+&pcie1 {
+	status = "disabled";
+};
+
+&pcie1_phy {
+	status = "disabled";
+};
+
+/* ------------------------------------------------------------------------
+ * USB-C — dual-role USB 3.1, DisplayPort altmode, VBUS source
+ *
+ * DP and Type-C have to land together. The msm DP driver resolves its
+ * downstream bridge with devm_drm_of_get_bridge() on port@1, and the chain
+ * is
+ *
+ *   mdss_dp -> usb_1_qmpphy        (phy-qcom-qmp-combo registers a
+ *                                   *passthrough* aux bridge, which itself
+ *                                   requires a downstream bridge)
+ *           -> pm8150b_typec connector
+ *                                  (qcom_pmic_typec adds the HPD bridge
+ *                                   that TERMINATES the chain)
+ *
+ * With no Type-C connector node nothing terminates the chain, the aux
+ * bridge fails -ENODEV, mdss_dp defers forever, and because mdss_dp is an
+ * msm-drm component the whole display — DSI panel included — never binds.
+ *
+ * The FSA4480 SBU/orientation switch is on &i2c15 (0x884000), not &i2c1
+ * (0x984000, the NFC bus). The stock OxygenOS tree says
+ * "fsa4480 = /soc/i2c@884000/fsa4480@42" and
+ * sm8250-xiaomi-pipa-common.dtsi independently agrees. On the wrong bus it
+ * never probes, typec_mux_get()/typec_switch_get() defer forever, and the
+ * display goes down with DP.
+ * ------------------------------------------------------------------------ */
+
+&usb_1 {
+	/* USB 2.0 + 3.0. qcom,select-utmi-as-pipe-clk is deliberately absent:
+	 * the pipe clock is parented to the QMP combo PHY, which is up. */
+	status = "okay";
+};
+
+&usb_1_dwc3 {
+	/*
+	 * OTG is required, not optional: dp_altmode_probe() rejects anything
+	 * but TYPEC_HOST. Pin assignment D carries 2 DP lanes + USB3 at the
+	 * same time; never force pin assignment C, which takes a dock's USB3
+	 * lanes away.
+	 */
+	dr_mode = "otg";
+	usb-role-switch;
+	phys = <&usb_1_hsphy>, <&usb_1_qmpphy QMP_USB43DP_USB3_PHY>;
+	phy-names = "usb2-phy", "usb3-phy";
+};
+
+&usb_1_dwc3_hs_out {
+	remote-endpoint = <&pm8150b_hs_in>;
+};
+
+&usb_1_hsphy {
+	vdda-pll-supply = <&vreg_l5a_0p88>;
+	vdda18-supply = <&vreg_l12a_1p8>;
+	vdda33-supply = <&vreg_l2a_3p1>;
+	status = "okay";
+};
+
+&usb_1_qmpphy {
+	vdda-phy-supply = <&vreg_l9a_1p2>;
+	vdda-pll-supply = <&vreg_l18a_0p92>;
+	status = "okay";
+};
+
+&usb_1_qmpphy_out {
+	remote-endpoint = <&pm8150b_typec_mux_in>;
+};
+
+&usb_1_qmpphy_dp_in {
+	remote-endpoint = <&mdss_dp_out>;
+};
+
+&mdss_dp {
+	status = "okay";
+};
+
+&mdss_dp_out {
+	/*
+	 * Four lanes. DP altmode negotiates pin assignment C with 4-lane
+	 * adapters and D with docks; dwc3 gives up the SuperSpeed lanes in
+	 * the former case. With data-lanes = <0 1> the controller trains only
+	 * two lanes — ~8.6 Gbps after 8b/10b at HBR2 — which cannot carry
+	 * 3840x2160@60 (~12.5 Gbps at 24 bpp): link training succeeds and the
+	 * monitor shows a black screen.
+	 */
+	data-lanes = <0 1 2 3>;
+	remote-endpoint = <&usb_1_qmpphy_dp_in>;
+};
+
+&pm8150b_typec {
+	status = "okay";
+
+	vdd-pdphy-supply = <&vreg_l2a_3p1>;
+
+	/*
+	 * VBUS comes from the MP2762A, not the pm8150b boost. kebab is a 2S
+	 * device (battery 8.6 V) and the pm8150b OTG boost exists to lift a
+	 * 1S cell to 5 V, so it can never source this port — every attach
+	 * logged "vbus vsafe5v fail". The MP2762A path was verified on
+	 * hardware: vSafe5V held for 60 s with otg_fail=0 / oc_hiccup=0 and a
+	 * bus-powered keyboard enumerated as HID.
+	 */
+	vdd-vbus-supply = <&otg_vbus>;
+
+	connector {
+		compatible = "usb-c-connector";
+
+		op-sink-microwatt = <10000000>;
+		power-role = "dual";
+		data-role = "dual";
+		try-power-role = "sink";
+		self-powered;
+
+		/*
+		 * 1.5 A source, matching the MP2762A OTG current limit (see
+		 * otg_vbus below and stock op_mp2650.c). Advertising 3 A that
+		 * the boost cannot deliver browns the rail out on a sink that
+		 * takes us at our word. Raise the regulator's
+		 * regulator-max-microamp and this PDO together, never one
+		 * alone.
+		 */
+		source-pdos = <PDO_FIXED(5000, 1500,
+				PDO_FIXED_DUAL_ROLE |
+				PDO_FIXED_USB_COMM |
+				PDO_FIXED_DATA_SWAP)>;
+
+		sink-pdos = <PDO_FIXED(5000, 3000,
+				PDO_FIXED_DUAL_ROLE |
+				PDO_FIXED_USB_COMM |
+				PDO_FIXED_DATA_SWAP)>;
+
+		altmodes {
+			displayport {
+				svid = /bits/ 16 <0xff01>;
+				vdo = <0x00001c46>;
+			};
+		};
+
+		ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			port@0 {
+				reg = <0>;
+
+				pm8150b_hs_in: endpoint {
+					remote-endpoint = <&usb_1_dwc3_hs_out>;
+				};
+			};
+
+			port@1 {
+				reg = <1>;
+
+				pm8150b_typec_mux_in: endpoint {
+					remote-endpoint = <&usb_1_qmpphy_out>;
+				};
+			};
+
+			port@2 {
+				reg = <2>;
+
+				pm8150b_typec_sbu_out: endpoint {
+					remote-endpoint = <&fsa4480_sbu_mux>;
+				};
+			};
+		};
+	};
+};
+
+/*
+ * Left enabled but unused: pm8150b_vbus is not wired as anyone's
+ * vbus-supply (see vdd-vbus-supply above). Keeping the node enabled makes
+ * reverting to it a one-line change if the MP2762A path ever regresses.
+ */
+&pm8150b_vbus {
+	regulator-min-microamp = <500000>;
+	regulator-max-microamp = <3000000>;
+	status = "okay";
+};
+
+&usb_2 {
+	status = "okay";
+};
+
+&usb_2_dwc3 {
+	dr_mode = "host";
+};
+
+&usb_2_hsphy {
+	vdda-pll-supply = <&vreg_l5a_0p88>;
+	vdda33-supply = <&vreg_l2a_3p1>;
+	vdda18-supply = <&vreg_l12a_1p8>;
+	status = "okay";
+};
+
+&usb_2_qmpphy {
+	vdda-phy-supply = <&vreg_l9a_1p2>;
+	vdda-pll-supply = <&vreg_l18a_0p92>;
+	status = "okay";
+};
+
+/* ------------------------------------------------------------------------
+ * Charging — MP2762A OTG boost
+ *
+ * ti,bq25980 came in when the kebab dts was copied from the OnePlus 8 Pro.
+ * It never initialises ("Cannot initialize the chip") and is not present
+ * here; battery reporting comes from the bq27541 fuel gauge on i2c16.
+ * ------------------------------------------------------------------------ */
+
+&i2c5 {
+	status = "okay";
+
+	charger@5c {
+		compatible = "mps,mp2762a";
+		reg = <0x5c>;
+
+		/*
+		 * PM8150 GPIO3 gates the boost output. No pinctrl state: the
+		 * "normal"/power-source=1 state tried during bring-up was
+		 * rejected by the pm8150 pinctrl driver and gpiod drives the
+		 * pin correctly without it.
+		 */
+		otg-gate-gpios = <&pm8150_gpios 3 GPIO_ACTIVE_HIGH>;
+
+		otg_vbus: otg-vbus {
+			regulator-name = "otg-vbus";
+			regulator-min-microvolt = <5000000>;
+			regulator-max-microvolt = <5000000>;
+
+			/*
+			 * OTG boost current limit, programmed into REG07[3:0]
+			 * in 250 mA steps. 1.5 A matches stock op_mp2650.c and
+			 * the source PDO advertised above.
+			 */
+			regulator-min-microamp = <1500000>;
+			regulator-max-microamp = <1500000>;
+
+			/*
+			 * The boost is slow: vSafe5V was measured arriving
+			 * between 550 ms and ~1.1 s after REG08[5] is written,
+			 * well outside the Type-C tSrcTurnOn budget of 275 ms.
+			 * Telling the regulator core how long this rail takes
+			 * makes regulator_enable() return only once VBUS is
+			 * really up, so the generic Type-C port driver's
+			 * 250 ms vSafe5V poll succeeds on the first attach
+			 * instead of warning and relying on TCPM's retry.
+			 *
+			 * An earlier attempt used 300 ms here, which is below
+			 * the measured range and did not help; that is why a
+			 * driver-side timeout bump looked necessary at the
+			 * time. See docs/REGRESSIONS.md, item USB-1.
+			 */
+			regulator-enable-ramp-delay = <1200000>;
+		};
+	};
+};
+
+&i2c15 {
+	clock-frequency = <400000>;
+	status = "okay";
+
+	/* SBU / orientation switch, also used for analogue USB-C audio */
+	typec-mux@42 {
+		compatible = "fcs,fsa4480";
+		reg = <0x42>;
+
+		vcc-supply = <&vreg_bob>;
+		mode-switch;
+		orientation-switch;
+
+		port {
+			fsa4480_sbu_mux: endpoint {
+				remote-endpoint = <&pm8150b_typec_sbu_out>;
+			};
+		};
+	};
+};
+
+/* ------------------------------------------------------------------------
+ * Audio
+ *
+ *   WCD9385 codec              SoundWire (swr1 RX / swr2 TX)
+ *   2x NXP TFA9874 speaker amp tertiary MI2S, TLMM gpio133/135/137
+ *   3x digital microphone      LPI gpio6..9, via the VA macro
+ *
+ * sm8250-mtp.dts is not a usable reference for this: it declares no
+ * &q6asmdai or &q6afedai children, so a card built from it fails with
+ * "MultiMedia1: error getting cpu dai name".
+ * ------------------------------------------------------------------------ */
+
+/ {
+	wcd938x: audio-codec {
+		compatible = "qcom,wcd9385-codec";
+
+		/* Stock OxygenOS wcd938x_reset_active drives gpio32. */
+		reset-gpios = <&tlmm 32 GPIO_ACTIVE_LOW>;
+
+		vdd-buck-supply = <&vreg_s4a_1p8>;
+		vdd-rxtx-supply = <&vreg_s4a_1p8>;
+		vdd-io-supply = <&vreg_s4a_1p8>;
+		vdd-mic-bias-supply = <&vreg_bob>;
+
+		qcom,micbias1-microvolt = <1800000>;
+		qcom,micbias2-microvolt = <1800000>;
+		qcom,micbias3-microvolt = <1800000>;
+		qcom,micbias4-microvolt = <1800000>;
+
+		qcom,mbhc-buttons-vthreshold-microvolt = <75000 150000 237000
+							 500000 500000 500000
+							 500000 500000>;
+		qcom,mbhc-headset-vthreshold-microvolt = <1700000>;
+		qcom,mbhc-headphone-vthreshold-microvolt = <50000>;
+
+		qcom,rx-device = <&wcd_rx>;
+		qcom,tx-device = <&wcd_tx>;
+
+		#sound-dai-cells = <1>;
+	};
+};
+
+/*
+ * The two speaker amplifiers share the USB-C mux's i2c bus (i2c15), which
+ * is brought up in the USB-C section above.
+ */
+&i2c15 {
+	/*
+	 * NXP TFA9874 smart speaker amplifiers (TFA2 family), left and right.
+	 * Verified against the stock OxygenOS DTB: this bus, 0x34 and 0x35,
+	 * reset on tlmm 91 / 99 active-high, both fed from pm8150_s4 (1.8 V,
+	 * vreg_s4a_1p8 here). The stock nodes carry reset-gpio only, so there
+	 * are no shutdown GPIOs to model.
+	 */
+	tfa9874_left: speaker-amp@34 {
+		compatible = "nxp,tfa9874";
+		reg = <0x34>;
+
+		vddd-supply = <&vreg_s4a_1p8>;
+		reset-gpios = <&tlmm 91 GPIO_ACTIVE_HIGH>;
+
+		nxp,tfa-channel = <0>;
+
+		/*
+		 * Both amps are separate ASoC components on one card, and
+		 * the driver's DAPM widgets are named per-instance
+		 * ("POWER", "SBSL", "OUT"). Without a prefix the two sets
+		 * collide, snd_soc_dapm_add_route() cannot tell them apart
+		 * ("sink widget OUT overwritten"), and the second amp's
+		 * supply widget lands outside any powered path -- it never
+		 * leaves power-down, so only one transducer plays.
+		 */
+		sound-name-prefix = "Left";
+
+		#sound-dai-cells = <0>;
+	};
+
+	tfa9874_right: speaker-amp@35 {
+		compatible = "nxp,tfa9874";
+		reg = <0x35>;
+
+		vddd-supply = <&vreg_s4a_1p8>;
+		reset-gpios = <&tlmm 99 GPIO_ACTIVE_HIGH>;
+
+		nxp,tfa-channel = <1>;
+
+		/* See the prefix comment on the left amp above. */
+		sound-name-prefix = "Right";
+
+		#sound-dai-cells = <0>;
+	};
+};
+
+&swr1 {
+	status = "okay";
+
+	wcd_rx: wcd9385-rx@0,4 {
+		compatible = "sdw20217010d00";
+		reg = <0 4>;
+		qcom,rx-port-mapping = <1 2 3 4 5>;
+	};
+};
+
+&swr2 {
+	status = "okay";
+
+	wcd_tx: wcd9385-tx@0,3 {
+		compatible = "sdw20217010d00";
+		reg = <0 3>;
+		qcom,tx-port-mapping = <2 3 4 5>;
+	};
+};
+
+&rxmacro {
+	status = "okay";
+};
+
+&txmacro {
+	status = "okay";
+};
+
+/*
+ * VA macro drives the digital microphones. kebab's handset mic is a DMIC on
+ * the LPI pins, not an analogue capsule on AMIC1: stock mixer_paths.xml maps
+ * "handset-mic" to "dmic2", i.e. TX DMIC MUX2 = DMIC1 on TX_CDC_DMA_TX_3.
+ *
+ * The DMIC pin states live here and NOT on txmacro: txmacro already owns
+ * gpio0-2 through tx_swr_active, and a second consumer claiming gpio6/gpio7
+ * there risks -EBUSY at probe, which would take the SoundWire TX bus and the
+ * speaker path down with it.
+ */
+&vamacro {
+	pinctrl-names = "default";
+	pinctrl-0 = <&dmic01_active>, <&dmic23_active>;
+	vdd-micb-supply = <&vreg_s4a_1p8>;
+	/*
+	 * 2.4 MHz. The driver derives the divider as VA_MACRO_MCLK_FREQ
+	 * (9.6 MHz) / rate, so 600 kHz — the value some other SM8250 boards
+	 * use — is DIV_16 and only 12.5x oversampling at 48 kHz. That leaves
+	 * un-decimated sigma-delta noise in the audio band: measured as a
+	 * floor rising from -120 dBFS at 1 kHz to -88 dBFS at 16 kHz, with a
+	 * broadband floor of -48 dBFS at unity gain. 2.4 MHz is DIV_4, 50x
+	 * oversampling, and matches stock's qcom,tx-dmic-sample-rate in
+	 * kona-audio-overlay.dtsi.
+	 */
+	qcom,dmic-sample-rate = <2400000>;
+};
+
+&sound {
+	compatible = "qcom,sm8250-sndcard";
+	model = "OnePlus 8T";
+
+	/* Tertiary MI2S pads carry the two TFA9874 amps. Without this the
+	 * pins never leave their default function, no BCLK/WS reaches the
+	 * amps, and they sit at CLKS=0 forever even though DAPM powers them
+	 * (PWDN 1->0, AMPE 0->1 confirmed over i2c). Same attachment point as
+	 * qrb5165-rb5, the upstream sm8250 board that drives TERTIARY_MI2S_RX. */
+	pinctrl-names = "default";
+	pinctrl-0 = <&tert_mi2s_active>;
+
+	audio-routing =
+		"IN1_HPHL", "HPHL_OUT",
+		"IN2_HPHR", "HPHR_OUT",
+		"AMIC1", "MIC BIAS1",
+		"AMIC2", "MIC BIAS2",
+		"AMIC3", "MIC BIAS3",
+		"AMIC4", "MIC BIAS3",
+		"AMIC5", "MIC BIAS4",
+		"TX SWR_ADC0", "ADC1_OUTPUT",
+		"TX SWR_ADC1", "ADC2_OUTPUT",
+		"TX SWR_ADC2", "ADC3_OUTPUT",
+		"TX SWR_ADC3", "ADC4_OUTPUT",
+		"VA DMIC0", "MIC BIAS1",
+		"VA DMIC1", "MIC BIAS1";
+
+	mm1-dai-link {
+		link-name = "MultiMedia1";
+
+		cpu {
+			sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA1>;
+		};
+	};
+
+	mm2-dai-link {
+		link-name = "MultiMedia2";
+
+		cpu {
+			sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA2>;
+		};
+	};
+
+	wcd-playback-dai-link {
+		link-name = "WCD Playback";
+
+		cpu {
+			sound-dai = <&q6afedai RX_CODEC_DMA_RX_0>;
+		};
+
+		platform {
+			sound-dai = <&q6routing>;
+		};
+
+		codec {
+			sound-dai = <&wcd938x 0>, <&swr1 0>, <&rxmacro 0>;
+		};
+	};
+
+	wcd-capture-dai-link {
+		link-name = "WCD Capture";
+
+		cpu {
+			sound-dai = <&q6afedai TX_CODEC_DMA_TX_3>;
+		};
+
+		platform {
+			sound-dai = <&q6routing>;
+		};
+
+		codec {
+			sound-dai = <&wcd938x 1>, <&swr2 0>, <&txmacro 0>;
+		};
+	};
+
+	va-dai-link {
+		link-name = "VA Capture";
+
+		cpu {
+			sound-dai = <&q6afedai VA_CODEC_DMA_TX_0>;
+		};
+
+		platform {
+			sound-dai = <&q6routing>;
+		};
+
+		codec {
+			sound-dai = <&vamacro 0>;
+		};
+	};
+
+	/*
+	 * Tertiary MI2S carries both TFA9874 amps. They sit on the same frame
+	 * and each picks its own channel, so this is one multi-codec link
+	 * rather than two links.
+	 *
+	 * Deliberately no card-level audio-routing entry for the speakers:
+	 * the speaker DAPM path lives inside the codec driver, and a wrong
+	 * card-level route name fails the whole card's probe, which would
+	 * take working headphone audio down with it.
+	 */
+	tert-mi2s-dai-link {
+		link-name = "Tertiary MI2S Playback";
+
+		cpu {
+			sound-dai = <&q6afedai TERTIARY_MI2S_RX>;
+		};
+
+		platform {
+			sound-dai = <&q6routing>;
+		};
+
+		codec {
+			sound-dai = <&tfa9874_left>, <&tfa9874_right>;
+		};
+	};
+};
+
+/*
+ * q6asmdai and q6afedai in sm8250.dtsi are empty containers. Their drivers
+ * register DAIs by walking child nodes, so every DAI the card references has
+ * to be declared. The unit addresses are the numeric DAI ids from
+ * dt-bindings/sound/qcom,q6asm.h and qcom,q6afe.h.
+ */
+&q6asmdai {
+	dai@0 {
+		reg = <MSM_FRONTEND_DAI_MULTIMEDIA1>;
+	};
+
+	dai@1 {
+		reg = <MSM_FRONTEND_DAI_MULTIMEDIA2>;
+	};
+};
+
+&q6afedai {
+	/* TERTIARY_MI2S_RX = 20. Stock kebab-oem.dtsi sets
+	 * qcom,msm-mi2s-rx-lines = <2>, i.e. MSM_MI2S_SD1, so playback to the
+	 * amps leaves on SD1 (gpio137) — not SD0 (gpio134), which is the
+	 * amps' VI-sense return and unused on this DSP-bypass path. */
+	dai@14 {
+		reg = <TERTIARY_MI2S_RX>;
+		qcom,sd-lines = <1>;
+	};
+
+	dai@6e {
+		reg = <VA_CODEC_DMA_TX_0>;
+	};
+
+	dai@71 {
+		reg = <RX_CODEC_DMA_RX_0>;
+	};
+
+	dai@78 {
+		reg = <TX_CODEC_DMA_TX_3>;
+	};
+};
+
+/*
+ * kebab is a 3-mic phone, so the DMIC2/DMIC3 pair needs its pins muxed too.
+ * sm8250.dtsi only defines dmic01-active-state, so this mirrors it for
+ * gpio8 / gpio9. Per pinctrl-sm8250-lpass-lpi.c dmic2_clk is gpio8 and
+ * dmic2_data is gpio9; their only alternate function is i2s1_data, which
+ * nothing on this board uses (the TFA amps are on tertiary MI2S, TLMM
+ * gpio133-137, not LPI), so there is no mux conflict.
+ */
+&lpass_tlmm {
+	dmic23_active: dmic23-active-state {
+		clk-pins {
+			pins = "gpio8";
+			function = "dmic2_clk";
+			drive-strength = <8>;
+			output-high;
+		};
+
+		data-pins {
+			pins = "gpio9";
+			function = "dmic2_data";
+			drive-strength = <8>;
+		};
+	};
+};
+
+/* ------------------------------------------------------------------------
+ * Camera — PM8008 camera PMIC, CAMSS, front IMX471
+ *
+ * Six independent problems were stacked here during bring-up and several of
+ * them corrupted the evidence for the others. The comments below record the
+ * ground truth for each, because every one of them is the kind of thing that
+ * looks like a dead sensor.
+ *
+ * Sensor map recovered from the vendor tree (only the front camera has a
+ * mainline driver today):
+ *
+ *   IMX586   wide/main   CCI0 master 0   CSIPHY 0
+ *   IMX481   ultrawide   CCI0 master 1   CSIPHY 1
+ *   GC02M1B  mono        CCI0 master 1   CSIPHY 2
+ *   GC5035   macro       CCI1 master 0   CSIPHY 3
+ *   IMX471   front       CCI1 master 1   CSIPHY 4
+ * ------------------------------------------------------------------------ */
+
+&i2c2 {
+	status = "okay";
+
+	pm8008: pmic@8 {
+		compatible = "qcom,pm8008";
+		reg = <0x8>;
+
+		interrupt-parent = <&tlmm>;
+		interrupts = <112 IRQ_TYPE_EDGE_RISING>;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&pm8008_active>, <&pm8008_interrupt>;
+
+		vdd-l1-l2-supply = <&vreg_s8c_1p3>;
+		vdd-l3-l4-supply = <&vreg_bob>;
+		vdd-l5-supply = <&vreg_bob>;
+		vdd-l6-supply = <&vreg_bob>;
+		vdd-l7-supply = <&vreg_bob>;
+
+		gpio-controller;
+		#gpio-cells = <2>;
+		gpio-ranges = <&pm8008 0 0 2>;
+
+		interrupt-controller;
+		#interrupt-cells = <2>;
+
+		#thermal-sensor-cells = <0>;
+
+		regulators {
+			pm8008_l1: ldo1 {
+				regulator-name = "pm8008_l1";
+				/*
+				 * cam_vdig. The vendor tree gives this rail as
+				 * a single point, rgltr-min == rgltr-max ==
+				 * 1100000 uV, not a range.
+				 *
+				 * 1100000 is NOT settable: the pm8008 LDO
+				 * steps in 8 mV, so the core rounds min up to
+				 * 1104000 and max down to 1096000, gets
+				 * min > max and refuses:
+				 *   pm8008_l1: unsupportable voltage
+				 *              constraints 1104000-1096000uV
+				 *   qcom-pm8008-regulator: failed to register
+				 *              regulator ldo1: -22
+				 * ldo1 failing aborts the whole driver probe,
+				 * so L1 AND L4 both vanish — taking cam_vio
+				 * down with cam_vdig and unpowering the entire
+				 * camera bus, EEPROMs included. Use the
+				 * nearest representable step.
+				 */
+				regulator-min-microvolt = <1104000>;
+				regulator-max-microvolt = <1104000>;
+			};
+
+			pm8008_l2: ldo2 {
+				regulator-name = "pm8008_l2";
+				regulator-min-microvolt = <528000>;
+				regulator-max-microvolt = <1200000>;
+			};
+
+			pm8008_l3: ldo3 {
+				regulator-name = "pm8008_l3";
+				regulator-min-microvolt = <1500000>;
+				regulator-max-microvolt = <3400000>;
+			};
+
+			pm8008_l4: ldo4 {
+				regulator-name = "pm8008_l4";
+				/* cam_vio, nominally shared with the rear
+				 * sensors. Not always-on: the imx471 driver
+				 * owns it through vio-supply and sequences it. */
+				regulator-min-microvolt = <1800000>;
+				regulator-max-microvolt = <1800000>;
+			};
+
+			pm8008_l5: ldo5 {
+				regulator-name = "pm8008_l5";
+				regulator-min-microvolt = <1500000>;
+				regulator-max-microvolt = <3400000>;
+			};
+
+			pm8008_l6: ldo6 {
+				regulator-name = "pm8008_l6";
+				regulator-min-microvolt = <1500000>;
+				regulator-max-microvolt = <3400000>;
+			};
+
+			pm8008_l7: ldo7 {
+				regulator-name = "pm8008_l7";
+				regulator-min-microvolt = <1500000>;
+				regulator-max-microvolt = <3400000>;
+			};
+		};
+	};
+};
+
+/ {
+	/*
+	 * Front camera VANA load switch. The vendor overlay gates VANA through
+	 * a dedicated GPIO ("CAM_front_VANA", raw pin 0x9c = 156) in addition
+	 * to the shared vreg_bob rail, so it is modelled as a fixed regulator
+	 * and the imx471 driver's own "vana" supply toggles it.
+	 *
+	 * ACTIVE HIGH. The vendor pinctrl for this pin drives gpio156
+	 * "output-low; bias-pull-down;" in the *suspend* / camera-off state,
+	 * so off == low and on == high. Declared GPIO_ACTIVE_LOW, gpiolib
+	 * parks the pin high (VANA on) while the regulator is nominally
+	 * disabled and drives it low (VANA off) exactly when the driver
+	 * enables the supply — i.e. the analog rail is cut for the duration of
+	 * every chip-id read:
+	 *   imx471 24-0010: Error reading reg 0x0016: -6
+	 *   imx471 24-0010: error -ENXIO: failed to read chip id
+	 */
+	vreg_cam_front_vana: regulator-cam-front-vana {
+		compatible = "regulator-fixed";
+		regulator-name = "vreg_cam_front_vana";
+		regulator-min-microvolt = <2856000>;
+		regulator-max-microvolt = <2856000>;
+		vin-supply = <&vreg_bob>;
+		gpio = <&tlmm 156 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+	};
+};
+
+&camss {
+	/*
+	 * CSIPHY analog supplies. Without these camss logs
+	 *   supply vdda-phy not found, using dummy regulator
+	 * once per CSIPHY and the PHY analog domain is never powered.
+	 * A dummy regulator lets every ioctl succeed and the media graph link
+	 * up while no CSI-2 data ever arrives — sensor identified, pipeline
+	 * configured, STREAMON accepted, zero frames, no error.
+	 * vreg_l5a_0p88 / vreg_l9a_1p2 are the standard SM8250 PHY analog +
+	 * PLL pairing; both already feed the UFS PHY on this board.
+	 */
+	vdda-phy-supply = <&vreg_l5a_0p88>;
+	vdda-pll-supply = <&vreg_l9a_1p2>;
+
+	status = "okay";
+
+	ports {
+		port@4 {
+			reg = <4>;
+
+			/*
+			 * CSIPHY-side lane numbering is 0-based and
+			 * clock-lanes is mandatory — qcom,sm8250-camss.yaml
+			 * lists both under "required".
+			 *
+			 * csiphy_lanes_enable() builds CTRL5 as BIT(pos * 2).
+			 * With the sensor's 1-based <1 2 3 4> that is
+			 * BIT(2,4,6,8) = 0x154 instead of BIT(0,2,4,6) = 0x55:
+			 * physical lane 0 left disabled and nonexistent lane
+			 * slots enabled, so the PHY never locks. Every ioctl
+			 * still succeeds and DQBUF blocks forever with no
+			 * error and no CSIPHY interrupt.
+			 *
+			 * The sensor endpoint below keeps <1 2 3 4>: that side
+			 * is the standard 1-based CSI-2 convention and
+			 * imx471_check_hwcfg() requires exactly 4 data lanes.
+			 */
+			csiphy4_front_ep: endpoint {
+				clock-lanes = <7>;
+				data-lanes = <0 1 2 3>;
+				bus-type = <MEDIA_BUS_TYPE_CSI2_DPHY>;
+				remote-endpoint = <&camf_imx471_ep>;
+			};
+		};
+	};
+};
+
+&cci0 {
+	status = "okay";
+};
+
+&cci1 {
+	/*
+	 * qcom,sm8250-cci is CCI v2 hardware, whose SCL timing table assumes a
+	 * 37.5 MHz CCI clock. sm8250.dtsi never sets assigned-clock-rates for
+	 * CAM_CC_CCI_1_CLK, so it rests at 19.2 MHz and every requested bus
+	 * rate comes out at roughly half. Mirrors the upstream sm8650 fix
+	 * ("arm64: dts: qcom: sm8650: Assign CCI clock rates to 37.5MHz").
+	 */
+	assigned-clocks = <&camcc CAM_CC_CCI_1_CLK>;
+	assigned-clock-rates = <37500000>;
+
+	status = "okay";
+};
+
+/*
+ * The front IMX471 is on CCI1 master 1, not master 0. The vendor tree says
+ * so twice, for the sensor and for its own EEPROM:
+ *
+ *   eeprom_front_0: qcom,eeprom@2   cci-master = <1>   Front: IMX471
+ *   qcom,cam-sensor@2               cci-master = <1>   Front: IMX471
+ *   eeprom_rear_2:  qcom,eeprom@3   cci-master = <0>   Micro: GC5035
+ *   qcom,cam-sensor@3               cci-master = <0>   Micro: GC5035
+ *
+ * A live scan agrees: i2c-23 (master 0) answers at 0x50/0x58, i2c-24
+ * (master 1) at 0x10, 0x54 and 0x5c. The 0x50/0x58 EEPROM cited for two days
+ * as proof that "the bus is alive so the sensor must be dead" belongs to the
+ * GC5035 macro camera on a bus the IMX471 was never on.
+ */
+&cci1_i2c1 {
+	/*
+	 * Fast mode, not the 1 MHz Fm+ that sm8250.dtsi defaults every CCI
+	 * child bus to. Sony IMX-family sensors are specified for 400 kHz; the
+	 * 24C64-style module EEPROMs are Fm+ parts, which is why they kept
+	 * ACKing at 1 MHz while the sensor never did.
+	 */
+	clock-frequency = <400000>;
+
+	/*
+	 * Slave address 0x10, not the 0x1a family default. IMX parts commonly
+	 * strap between the two, and a powered scan on this bus found 0x10
+	 * (sensor) plus 0x54/0x5c (the front module's own EEPROM).
+	 */
+	camf_imx471: camera@10 {
+		compatible = "sony,imx471";
+		reg = <0x10>;
+
+		/*
+		 * Vendor power-up order is VANA -> VDIG -> VIO -> MCLK ->
+		 * RESET, recovered from the stock sensor-module descriptor.
+		 * The driver enables these in the order of its own supply
+		 * table, not the order they appear here.
+		 */
+		vana-supply = <&vreg_cam_front_vana>;
+		vdig-supply = <&pm8008_l1>;
+		vio-supply = <&pm8008_l4>;
+
+		clocks = <&camcc CAM_CC_MCLK4_CLK>;
+		assigned-clocks = <&camcc CAM_CC_MCLK4_CLK>;
+		assigned-clock-rates = <19200000>;
+
+		reset-gpios = <&tlmm 144 GPIO_ACTIVE_LOW>;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&cam_mclk4_default>;
+
+		orientation = <0>;
+
+		port {
+			camf_imx471_ep: endpoint {
+				data-lanes = <1 2 3 4>;
+				link-frequencies = /bits/ 64 <200000000>;
+				remote-endpoint = <&csiphy4_front_ep>;
+			};
+		};
+	};
+};
+
+/* ------------------------------------------------------------------------
+ * External modem — Snapdragon X55 (SDX55) on PCIe2
+ *
+ * The SM8250 has no integrated modem; this phone pairs it with a discrete
+ * SDX55 that appears as PCI 17cb:0306 subsystem 17cb:010c. None of the usual
+ * mpss / remoteproc / rmtfs work applies, and sm8250.dtsi correctly has no
+ * modem node. Host-side boot is handled by the MHI Sahara loader; see
+ * docs/MODEM.md.
+ * ------------------------------------------------------------------------ */
+
+&pcie2 {
+	/*
+	 * Route the SDX55's 32 MSI vectors through the GICv3 MBI path. With
+	 * the DesignWare internal MSI receiver the endpoint's writes land in
+	 * its own SMMU domain and fault at IOVA 0x64100000:
+	 *
+	 *   arm-smmu 15000000.iommu: Unhandled context fault: fsr=0x402,
+	 *       iova=0x64100000, fsynr=0x610011, cbfrsynra=0x1d01, cb=12
+	 *
+	 * OxygenOS uses GIC SPI 832..863 with a SETSPI doorbell at
+	 * 0x17a10040; GIC MBI ranges use absolute INTIDs, so the matching
+	 * range is 864..895. iommu-map is untouched and no global IOMMU
+	 * bypass is involved.
+	 */
+	msi-parent = <&intc>;
+	status = "okay";
+};
+
+&pcie2_phy {
+	vdda-phy-supply = <&vreg_l5a_0p88>;
+	vdda-pll-supply = <&vreg_l9a_1p2>;
+	status = "okay";
+};
+
+&intc {
+	msi-controller;
+	mbi-ranges = <864 32>;
+	mbi-alias = <0x0 0x17a10000>;
+};
+
+/*
+ * ESOC sideband liveness signalling for the SDX55.
+ *
+ * Stock OxygenOS drives four GPIOs between the AP and the modem via
+ * Qualcomm's ESOC framework (qcom,mdm0 / "qcom,ext-sdx55m"), which mainline
+ * does not have:
+ *
+ *   ap2mdm-status   gpio56   AP tells the modem it is alive
+ *   ap2mdm-errfatal gpio57   AP tells the modem it has crashed
+ *   mdm2ap-status   gpio3    modem tells the AP it is alive
+ *   mdm2ap-errfatal gpio1    modem tells the AP it has crashed
+ *
+ * Only the two AP-to-modem lines are driven, hogged to their "AP is up and
+ * healthy" levels. Porting drivers/esoc itself was tried and abandoned:
+ * ESOC_BOOT_DONE is a no-op toward the modem (it only calls
+ * esoc_clink_evt_notify(ESOC_RUN_STATE), which is AP-internal), kebab's
+ * qcom,mdm0 node wires no wake/vddmin lines, and esoc.h depends on the
+ * downstream SSR stack that mainline replaced with remoteproc.
+ */
+&tlmm {
+	ap2mdm-status-hog {
+		gpio-hog;
+		gpios = <56 GPIO_ACTIVE_HIGH>;
+		output-high;
+		line-name = "ap2mdm-status";
+	};
+
+	ap2mdm-errfatal-hog {
+		gpio-hog;
+		gpios = <57 GPIO_ACTIVE_HIGH>;
+		output-low;
+		line-name = "ap2mdm-errfatal";
+	};
+};
+
+/* ------------------------------------------------------------------------
+ * Pin configuration
+ * ------------------------------------------------------------------------ */
+
+&pm8150_gpios {
+	vol_up_n: vol-up-n-state {
+		pins = "gpio6";
+		function = "normal";
+		power-source = <1>;
+		input-enable;
+		bias-pull-up;
+	};
+
+	vol_down_n: vol-down-n-state {
+		pins = "gpio7";
+		function = "normal";
+		power-source = <1>;
+		input-enable;
+		bias-pull-up;
+	};
+};
+
+&tlmm {
+	gpio-reserved-ranges = <28 4>, <40 4>;
+
+	/* Wi-Fi / Bluetooth enable lines, consumed by the QCA6390 PMU. */
+	bt_en_active: bt-default-state {
+		bt-en {
+			pins = "gpio21";
+			function = "gpio";
+			drive-strength = <16>;
+			output-low;
+			bias-pull-up;
+		};
+	};
+
+	wlan_en_active: wlan-default-state {
+		wlan-en {
+			pins = "gpio20";
+			function = "gpio";
+			drive-strength = <16>;
+			output-low;
+			bias-pull-up;
+		};
+	};
+
+	/* Touchscreen interrupt (gpio39) and reset (gpio38). */
+	ts_int_active: ts-int-active-state {
+		pins = "gpio38", "gpio39";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-up;
+	};
+
+	/* Display panel. */
+	panel_reset_pins: panel-reset-state {
+		pins = "gpio75";
+		function = "gpio";
+		drive-strength = <8>;
+		bias-disable;
+	};
+
+	panel_vsync_pins: panel-vsync-state {
+		pins = "gpio66";
+		function = "mdp_vsync";
+		drive-strength = <16>;
+		bias-pull-down;
+	};
+
+	panel_vout_pins: panel-vout-state {
+		pins = "gpio24";
+		function = "gpio";
+		drive-strength = <16>;
+		output-high;
+	};
+
+	/*
+	 * Tertiary MI2S to the TFA9874 amps. Pins and mux functions are from
+	 * the stock OxygenOS DTB: gpio133 = mi2s2_sck, gpio135 = mi2s2_ws,
+	 * gpio137 = mi2s2_data1.
+	 */
+	tert_mi2s_active: tert-mi2s-active-state {
+		sck-pins {
+			pins = "gpio133";
+			function = "mi2s2_sck";
+			drive-strength = <8>;
+			bias-disable;
+		};
+
+		ws-pins {
+			pins = "gpio135";
+			function = "mi2s2_ws";
+			drive-strength = <8>;
+			bias-disable;
+		};
+
+		data1-pins {
+			pins = "gpio137";
+			function = "mi2s2_data1";
+			drive-strength = <8>;
+			bias-disable;
+		};
+	};
+
+	/*
+	 * PM8008 camera PMIC chip-enable. Per the vendor overlay, gpio93 must
+	 * be driven output-high or the chip never responds to register access
+	 * even though the i2c client still enumerates. Without it
+	 * pm8008_probe()'s devm_regmap_add_irq_chip_fwnode() fails writing the
+	 * MISC peripheral's INT_EN_CLR register (0x916) with -ENXIO, aborts
+	 * before devm_mfd_add_devices(), and none of L1..L7 — including
+	 * cam_vdig — are ever registered.
+	 */
+	pm8008_active: pm8008-active-state {
+		pins = "gpio93";
+		function = "gpio";
+		drive-strength = <2>;
+		output-high;
+		bias-pull-up;
+	};
+
+	pm8008_interrupt: pm8008-interrupt-state {
+		pins = "gpio112";
+		function = "gpio";
+		bias-disable;
+		input-enable;
+	};
+
+	/*
+	 * MCLK4 for the front camera. sm8250.dtsi stops at cam_mclk3; this
+	 * state is defined here rather than patched into the SoC dtsi.
+	 */
+	cam_mclk4_default: cam-mclk4-default-state {
+		pins = "gpio98";
+		function = "cam_mclk";
+		drive-strength = <4>;
+		bias-disable;
+	};
+};

@@ -1,0 +1,124 @@
+#!/bin/sh
+# Give the QCA6390 a stable, per-device Bluetooth address.
+#
+# htnv20.bin ships the placeholder 00:00:00:00:5A:AD. btqca sets
+# HCI_QUIRK_USE_BDADDR_PROPERTY when it reads that value back, so with no
+# local-bd-address in the devicetree the controller registers
+# HCI_UNCONFIGURED:
+#
+#   BD Address: 00:00:00:00:5A:AD     DOWN RAW
+#   Can't init device hci0: Not supported (95)
+#
+# and bluetoothd never registers an adapter. The supported way out is the
+# management interface's Set Public Address command, which is exactly what
+# an unconfigured controller exposes and what hci_qca implements through
+# hdev->set_bdaddr.
+#
+# Putting one constant in the devicetree instead -- which is what bring-up
+# did -- gives every kebab in the world the same Bluetooth address. This
+# derives a locally administered address from /etc/machine-id, so it is
+# stable across reboots and reflashes of the same install, and different
+# between devices.
+#
+# Usage: kebab-bluetooth-addr [hci0]
+set -eu
+
+DEV="${1:-hci0}"
+INDEX="${DEV#hci}"
+
+log() { echo "kebab-bluetooth-addr: $*"; }
+
+# btmgmt lives in /usr/sbin on postmarketOS, and systemd's default PATH is
+# only /usr/local/bin:/usr/bin -- so do not rely on PATH.
+BTMGMT=""
+for c in /usr/bin/btmgmt /usr/sbin/btmgmt /bin/btmgmt /sbin/btmgmt \
+	 /usr/local/bin/btmgmt /usr/local/sbin/btmgmt; do
+	if [ -x "$c" ]; then BTMGMT="$c"; break; fi
+done
+if [ -z "$BTMGMT" ]; then
+	BTMGMT=$(command -v btmgmt 2>/dev/null || true)
+fi
+if [ -z "$BTMGMT" ]; then
+	log "btmgmt not found (install bluez); $DEV stays unconfigured"
+	exit 0
+fi
+
+# Wait for the controller to become visible to the management interface.
+#
+# Two separate lists, and this is the whole subtlety:
+#
+#   btmgmt info    reads MGMT_OP_READ_INDEX_LIST        CONFIGURED only
+#   btmgmt config  reads MGMT_OP_READ_UNCONF_INDEX_LIST UNCONFIGURED only
+#
+# A controller with no usable address is only in the second one, so "info"
+# prints "Index list with 0 items" and says nothing about it at all.
+#
+# Polling sysfs is not enough either: udev fires the "add" event for
+# /sys/class/bluetooth/hciN as soon as the device is created, but the QCA
+# parts only enter either list once hci_register_dev() has finished, which
+# is after the firmware download (htbtfw20.tlv + htnv20.bin, about 12 s
+# from boot on this board). Running at the udev event and checking once
+# finds the controller in neither list.
+#
+# Pass no --index to either command: btmgmt misprints the index in
+# "config" output (it shows hci304: for --index 0), and both list every
+# controller anyway. --index is only used for public-addr below.
+state=""
+i=0
+while [ "$i" -lt 60 ]; do
+	if "$BTMGMT" info 2>/dev/null | grep -q "^$DEV:"; then
+		state=configured
+		break
+	fi
+	if "$BTMGMT" config 2>/dev/null | grep -q "^$DEV:"; then
+		state=unconfigured
+		break
+	fi
+	i=$((i + 1))
+	sleep 1
+done
+
+case "$state" in
+configured)
+	cur=$("$BTMGMT" info 2>/dev/null | sed -n "/^$DEV:/,/^hci/p" \
+	      | sed -n 's/^[[:space:]]*addr \([0-9A-Fa-f:]*\).*/\1/p' | head -1)
+	log "$DEV already configured (addr ${cur:-unknown}), leaving it alone"
+	exit 0
+	;;
+unconfigured)
+	if ! "$BTMGMT" config 2>/dev/null | sed -n "/^$DEV:/,/^hci/p" \
+	     | grep -q '^[[:space:]]*missing options:.*public-address'; then
+		log "$DEV is unconfigured but not for want of an address; leaving it alone"
+		exit 0
+	fi
+	log "$DEV is unconfigured after ${i}s, assigning an address"
+	;;
+*)
+	log "$DEV never reached either management list within ${i}s, nothing to do"
+	exit 0
+	;;
+esac
+
+if [ ! -r /etc/machine-id ]; then
+	log "no /etc/machine-id; cannot derive a stable address"
+	exit 1
+fi
+
+# 5 bytes of a hash of the machine id. The first octet is fixed at 0x02:
+# bit 1 set marks the address locally administered, bit 0 clear marks it
+# unicast, which is what a controller address has to be.
+digest=$(printf '%s' "$(cat /etc/machine-id)-kebab-bt" | sha256sum | cut -c1-10)
+addr="02"
+n=1
+while [ "$n" -lt 10 ]; do
+	addr="$addr:$(printf '%s' "$digest" | cut -c"$n"-"$((n + 1))")"
+	n=$((n + 2))
+done
+
+log "assigning $addr to $DEV"
+if "$BTMGMT" --index "$INDEX" public-addr "$addr"; then
+	exit 0
+fi
+
+log "btmgmt rejected the address; $DEV stays unconfigured"
+exit 1

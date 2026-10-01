@@ -1,0 +1,52 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: kebab refactor <kebab@local.invalid>
+Date: Thu, 1 Oct 2026 15:02:57 +0200
+Subject: [PATCH] ASoC: codecs: wcd938x: don't log an impedance ramp with no
+ headset as an error
+
+wcd938x_mbhc_get_result_params() prints "Impedance detect ramp error" at
+error level whenever the ZDET ramp returns c1 == 0 or x1 == 0. That is
+what the ramp returns when there is no load across HPHL/HPHR, i.e. on
+every board with no headset plugged in, and always on boards that have
+no analogue headset jack at all.
+
+It is not a quiet path. "HPHL Impedance", "HPHR Impedance" and "HPH
+Type" are ordinary readable controls whose get handlers call
+wcd_mbhc_get_impedance(), so each one runs a fresh ramp every time it is
+read. Anything that enumerates the card's controls -- alsactl store,
+PipeWire, amixer contents -- produces a burst of these lines at boot.
+
+The condition is already handled: the function jumps to ramp_down
+leaving *zdet untouched, and userspace reads back 0. Demote the message
+to dev_dbg so a genuinely unexpected ramp failure can still be traced
+without the unplugged case reporting errors on every boot.
+---
+ sound/soc/codecs/wcd938x.c | 15 ++++++++++++++-
+ 1 file changed, 14 insertions(+), 1 deletion(-)
+
+diff --git a/sound/soc/codecs/wcd938x.c b/sound/soc/codecs/wcd938x.c
+index ef61a7b2e..17a4a9104 100644
+--- a/sound/soc/codecs/wcd938x.c
++++ b/sound/soc/codecs/wcd938x.c
+@@ -2108,7 +2108,20 @@ static void wcd938x_mbhc_get_result_params(struct snd_soc_component *component,
+ 		usleep_range(5000, 5050);
+ 
+ 	if (!c1 || !x1) {
+-		dev_err(component->dev, "Impedance detect ramp error, c1=%d, x1=0x%x\n",
++		/*
++		 * The ramp produces nothing when there is no load across
++		 * HPHL/HPHR, which is the normal state on any board without a
++		 * headset plugged in -- and the permanent state on the many
++		 * boards that have no analogue headset jack at all. The
++		 * "HPHL/HPHR Impedance" and "HPH Type" controls are plain
++		 * readable ALSA controls that run a fresh ramp on every get,
++		 * so anything that enumerates the card's controls (alsactl
++		 * store, PipeWire, amixer contents) trips this path several
++		 * times at every boot. Nothing is wrong and the caller is
++		 * already handled: zdet is left at its initial value and
++		 * userspace reads back 0.
++		 */
++		dev_dbg(component->dev, "Impedance detect ramp error, c1=%d, x1=0x%x\n",
+ 			c1, x1);
+ 		goto ramp_down;
+ 	}

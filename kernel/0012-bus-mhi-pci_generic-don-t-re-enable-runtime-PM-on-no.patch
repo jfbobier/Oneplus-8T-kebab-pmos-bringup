@@ -1,0 +1,70 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: kebab refactor <kebab@local.invalid>
+Date: Wed, 30 Sep 2026 01:42:17 +0200
+Subject: [PATCH] bus: mhi: pci_generic: don't re-enable runtime PM on no_m3
+ devices
+
+mhi_pci_probe() only arms autosuspend when the device supports both PME
+from D3hot and M3:
+
+	if (pci_pme_capable(pdev, PCI_D3hot) && !(info->no_m3))
+
+but mhi_pci_status_cb() then calls pm_runtime_allow() unconditionally
+when the device reaches mission mode, silently undoing that decision a
+few seconds after probe. Any attempt by userspace to pin power/control
+is undone the same way.
+
+On a device that genuinely cannot do M3 the consequence is a resume
+timeout after some number of autosuspend cycles, a recovery-work
+pci_try_reset_function() the endpoint never comes back from, and a
+modem that is unreachable until a cold boot.
+
+Carry no_m3 into struct mhi_pci_device and honour it in the callback.
+---
+ drivers/bus/mhi/host/pci_generic.c | 12 +++++++++++-
+ 1 file changed, 11 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/bus/mhi/host/pci_generic.c b/drivers/bus/mhi/host/pci_generic.c
+index 2332b7c5c..b3485c001 100644
+--- a/drivers/bus/mhi/host/pci_generic.c
++++ b/drivers/bus/mhi/host/pci_generic.c
+@@ -1175,6 +1175,7 @@ struct mhi_pci_device {
+ 	struct timer_list health_check_timer;
+ 	unsigned long status;
+ 	bool reset_on_remove;
++	bool no_m3;
+ };
+ 
+ static int mhi_pci_read_reg(struct mhi_controller *mhi_cntrl,
+@@ -1194,6 +1195,9 @@ static void mhi_pci_status_cb(struct mhi_controller *mhi_cntrl,
+ 			      enum mhi_callback cb)
+ {
+ 	struct pci_dev *pdev = to_pci_dev(mhi_cntrl->cntrl_dev);
++	struct mhi_pci_device *mhi_pdev = container_of(mhi_cntrl,
++						       struct mhi_pci_device,
++						       mhi_cntrl);
+ 
+ 	/* Nothing to do for now */
+ 	switch (cb) {
+@@ -1203,7 +1207,12 @@ static void mhi_pci_status_cb(struct mhi_controller *mhi_cntrl,
+ 		pm_runtime_forbid(&pdev->dev);
+ 		break;
+ 	case MHI_CB_EE_MISSION_MODE:
+-		pm_runtime_allow(&pdev->dev);
++		/*
++		 * Probe deliberately leaves runtime PM disabled on devices
++		 * that cannot do M3; do not hand it back here.
++		 */
++		if (!mhi_pdev->no_m3)
++			pm_runtime_allow(&pdev->dev);
+ 		break;
+ 	default:
+ 		break;
+@@ -1456,6 +1465,7 @@ static int mhi_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
+ 		return -ENOMEM;
+ 
+ 	INIT_WORK(&mhi_pdev->recovery_work, mhi_pci_recovery_work);
++	mhi_pdev->no_m3 = info->no_m3;
+ 
+ 	if (pdev->is_virtfn && info->vf_config)
+ 		mhi_cntrl_config = info->vf_config;

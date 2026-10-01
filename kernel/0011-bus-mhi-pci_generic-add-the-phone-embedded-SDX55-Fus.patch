@@ -1,0 +1,154 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: kebab refactor <kebab@local.invalid>
+Date: Wed, 30 Sep 2026 01:42:00 +0200
+Subject: [PATCH] bus: mhi: pci_generic: add the phone-embedded SDX55
+ ("Fusion") profile
+
+A Snapdragon X55 soldered into a phone reports PCI 17cb:0306 with
+subsystem 17cb:010c, the same IDs as a Foxconn T99W175 M.2 module. The
+Foxconn profile carries no .fw at all, so the host never boots the
+device: it stalls in PBL with no channels.
+
+Add a profile for the embedded part:
+
+  - SAHARA on channels 2/3 in the SBL execution environment, which is
+    how a flashless SDX55 receives AMSS (see the Sahara loader);
+  - EFS on channels 10/11, which an RMTEFS firmware build needs
+    serviced or it ERRFATALs roughly 65 s after its first EFS-Sync;
+  - generous timeouts, because Sahara moves ~85 MB of qdsp6sw one
+    request at a time;
+  - amss_fw, plumbed into mhi_controller::amss_image for the loader;
+  - no_m3, because this part cannot be resumed reliably from M3. After
+    a number of autosuspend cycles the resume times out ("Did not
+    enter M0 state", "failed to resume device: -5"),
+    mhi_pci_recovery_work() issues pci_try_reset_function(), the
+    endpoint never re-trains, and the modem is unreachable until a
+    cold boot. There is no sideband wake wired on these boards to
+    recover it either.
+
+Firmware lives in /lib/firmware/sdx55m/ with no qcom/ prefix, matching
+the paths the Sahara loader builds.
+
+Telling a real T99W175 apart would need a discriminator beyond the PCI
+IDs, so this ID override is not suitable as-is for upstream.
+---
+ drivers/bus/mhi/host/pci_generic.c | 84 +++++++++++++++++++++++++++++-
+ 1 file changed, 83 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/bus/mhi/host/pci_generic.c b/drivers/bus/mhi/host/pci_generic.c
+index 0d0d9c7ff..2332b7c5c 100644
+--- a/drivers/bus/mhi/host/pci_generic.c
++++ b/drivers/bus/mhi/host/pci_generic.c
+@@ -54,6 +54,7 @@ struct mhi_pci_dev_info {
+ 	const char *name;
+ 	const char *fw;
+ 	const char *edl;
++	const char *amss_fw;
+ 	bool edl_trigger;
+ 	unsigned int bar_num;
+ 	unsigned int dma_data_width;
+@@ -371,6 +372,79 @@ static const struct mhi_controller_config modem_qcom_v1_mhiv_config = {
+ 	.event_cfg = modem_qcom_v1_mhi_events,
+ };
+ 
++/*
++ * Qualcomm SDX55M in "Fusion" configuration: an SDX55 embedded in a phone with
++ * no flash of its own, so the host must supply the whole boot chain. Seen on the
++ * OnePlus 8T (kebab) and Xiaomi Mi 10T (apollo), both of which report PCI
++ * 17cb:0306 with subsystem 17cb:010c.
++ *
++ * BHI loads sbl1.mbn as usual, but AMSS does *not* arrive over BHIe/FBC: the SBL
++ * asks for images one at a time over the Sahara v2 protocol on MHI channels 2/3,
++ * which only exist in the SBL execution environment. Pushing AMSS over BHIe
++ * instead makes the SBL reject the vector with BHIE_TXVECSTATUS_STATUS_ERROR,
++ * which is what an earlier attempt on kebab hit. mhi_sahara_modem
++ * (CONFIG_MHI_BUS_SAHARA_MODEM) binds to the SAHARA channel and serves those
++ * requests; amss_fw reaches it via mhi_controller::amss_image.
++ *
++ * Firmware lives in /lib/firmware/sdx55m/ (no qcom/ prefix) because the Sahara
++ * loader builds its paths that way.
++ */
++static const struct mhi_channel_config modem_qcom_sdx55_fusion_channels[] = {
++	/* SBL-only: how a flash-less SDX55 receives AMSS */
++	MHI_CHANNEL_CONFIG_UL_SBL(2, "SAHARA", 128, 1),
++	MHI_CHANNEL_CONFIG_DL_SBL(3, "SAHARA", 128, 1),
++	MHI_CHANNEL_CONFIG_UL(4, "DIAG", 16, 1),
++	MHI_CHANNEL_CONFIG_DL(5, "DIAG", 16, 1),
++	/* EFS: the modem reads and writes its NV state through these once up */
++	MHI_CHANNEL_CONFIG_UL(10, "EFS", 64, 1),
++	MHI_CHANNEL_CONFIG_DL(11, "EFS", 64, 1),
++	MHI_CHANNEL_CONFIG_UL(12, "MBIM", 4, 0),
++	MHI_CHANNEL_CONFIG_DL(13, "MBIM", 4, 0),
++	MHI_CHANNEL_CONFIG_UL(14, "QMI", 4, 0),
++	MHI_CHANNEL_CONFIG_DL(15, "QMI", 4, 0),
++	MHI_CHANNEL_CONFIG_UL(20, "IPCR", 8, 0),
++	MHI_CHANNEL_CONFIG_DL(21, "IPCR", 8, 0),
++	MHI_CHANNEL_CONFIG_UL_FP(34, "FIREHOSE", 32, 0),
++	MHI_CHANNEL_CONFIG_DL_FP(35, "FIREHOSE", 32, 0),
++	MHI_CHANNEL_CONFIG_UL(46, "IP_SW0", 64, 2),
++	MHI_CHANNEL_CONFIG_DL(47, "IP_SW0", 64, 3),
++	MHI_CHANNEL_CONFIG_HW_UL(100, "IP_HW0", 128, 4),
++	MHI_CHANNEL_CONFIG_HW_DL(101, "IP_HW0", 128, 5),
++};
++
++static const struct mhi_controller_config modem_qcom_sdx55_fusion_config = {
++	.max_channels = 128,
++	/* Sahara serves ~85 MB of qdsp6sw one request at a time: be patient */
++	.timeout_ms = 60000,
++	.ready_timeout_ms = 50000,
++	.num_channels = ARRAY_SIZE(modem_qcom_sdx55_fusion_channels),
++	.ch_cfg = modem_qcom_sdx55_fusion_channels,
++	.num_events = ARRAY_SIZE(modem_qcom_v1_mhi_events),
++	.event_cfg = modem_qcom_v1_mhi_events,
++};
++
++static const struct mhi_pci_dev_info mhi_qcom_sdx55_fusion_info = {
++	.name = "qcom-sdx55m-fusion",
++	.fw = "sdx55m/sbl1.mbn",
++	.edl = "sdx55m/edl.mbn",
++	.amss_fw = "sdx55m/multi_image.mbn",
++	.edl_trigger = true,
++	.config = &modem_qcom_sdx55_fusion_config,
++	.bar_num = MHI_PCI_DEFAULT_BAR_NUM,
++	.dma_data_width = 32,
++	.mru_default = 32768,
++	.sideband_wake = false,
++	/*
++	 * The phone-embedded SDX55 cannot be resumed reliably from M3. After a
++	 * number of autosuspend cycles the resume times out ("Did not enter M0
++	 * state", "failed to resume device: -5"); mhi_pci_recovery_work() then
++	 * issues pci_try_reset_function(), the endpoint never re-trains, and the
++	 * modem is unreachable until a cold boot. There is no sideband wake wired
++	 * on this board to recover it either, so stay out of M3 entirely.
++	 */
++	.no_m3 = true,
++};
++
+ static const struct mhi_pci_dev_info mhi_qcom_sa8775p_info = {
+ 	.name = "qcom-sa8775p",
+ 	.edl_trigger = false,
+@@ -961,8 +1035,15 @@ static const struct pci_device_id mhi_pci_id_table[] = {
+ 		.driver_data = (kernel_ulong_t) &mhi_qcom_sdx35_info },
+ 	{ PCI_DEVICE(PCI_VENDOR_ID_QCOM, 0x0304),
+ 		.driver_data = (kernel_ulong_t) &mhi_qcom_sdx24_info },
++	/*
++	 * Subsystem 17cb:010c is ambiguous: upstream maps it to a Foxconn M.2
++	 * module, but a phone-embedded (Fusion) SDX55 reports the same IDs. The
++	 * Foxconn profile carries no .fw at all, so the host never boots the
++	 * modem. Prefer Fusion here; telling a real T99W175 apart would need a
++	 * discriminator beyond PCI IDs, so this is not upstreamable as-is.
++	 */
+ 	{ PCI_DEVICE_SUB(PCI_VENDOR_ID_QCOM, 0x0306, PCI_VENDOR_ID_QCOM, 0x010c),
+-		.driver_data = (kernel_ulong_t) &mhi_foxconn_sdx55_info },
++		.driver_data = (kernel_ulong_t) &mhi_qcom_sdx55_fusion_info },
+ 	/* EM919x (sdx55), use the same vid:pid as qcom-sdx55m */
+ 	{ PCI_DEVICE_SUB(PCI_VENDOR_ID_QCOM, 0x0306, 0x18d7, 0x0200),
+ 		.driver_data = (kernel_ulong_t) &mhi_sierra_em919x_info },
+@@ -1395,6 +1476,7 @@ static int mhi_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
+ 	mhi_cntrl->iova_stop = (dma_addr_t)DMA_BIT_MASK(dma_data_width);
+ 	mhi_cntrl->fw_image = info->fw;
+ 	mhi_cntrl->edl_image = info->edl;
++	mhi_cntrl->amss_image = info->amss_fw;
+ 
+ 	mhi_cntrl->read_reg = mhi_pci_read_reg;
+ 	mhi_cntrl->write_reg = mhi_pci_write_reg;

@@ -1,0 +1,142 @@
+# Reference: <https://postmarketos.org/vendorkernel>
+# Kernel config based on: arch/arm64/configs/defconfig
+# Co-Maintainer: bluebunny <bluebunny@postmarketos.org>
+maintainer="Jianhua Lu <lujianhua000@gmail.com>"
+_flavor="postmarketos-qcom-sm8250"
+pkgname=linux-$_flavor
+pkgver=7.2.0
+pkgrel=22
+pkgdesc="Mainline kernel fork for SM8250"
+arch="aarch64"
+_carch="arm64"
+url="https://gitlab.postmarketos.org/soc/qualcomm-sm8250/linux"
+license="GPL-2.0-only"
+options="!strip !check !tracedeps
+	pmb:cross-native
+	pmb:kconfigcheck-nftables
+	pmb:kconfigcheck-community
+	pmb:kconfigcheck-uefi
+"
+makedepends="
+	bash
+	bison
+	clang
+	elfutils-dev
+	findutils
+	flex
+	linux-headers
+	lld
+	llvm
+	openssl-dev
+	pahole
+	perl
+	postmarketos-installkernel
+	python3
+"
+
+# Source
+_tag="sm8250-$pkgver"
+_config="config-$_flavor.$arch"
+
+# The OnePlus 8T (kebab) board devicetree is maintained as a whole file
+# rather than as a stack of patches -- see docs/REFACTOR.md. prepare()
+# drops it over the in-tree copy. Everything in $_kebab_patches is a real
+# C-level change; anything that could be expressed as board description or
+# as userspace policy is not here.
+_kebab_dts="sm8250-oneplus-kebab.dts"
+
+source="
+	$pkgname-$_tag.tar.gz::https://gitlab.postmarketos.org/soc/qualcomm-sm8250/linux/-/archive/$_tag/linux-$_tag.tar.gz
+	$_config
+	$_kebab_dts
+	0001-drm-panel-add-Samsung-AMB655X-panel-driver.patch
+	0002-input-touchscreen-add-Synaptics-TCM-oncell-driver.patch
+	0003-regulator-add-MP2762A-OTG-VBUS-regulator.patch
+	0004-drm-msm-dp-don-t-apply-the-wide-bus-pixel-clock-halv.patch
+	0005-usb-typec-displayport-defer-instead-of-failing-when-.patch
+	0006-ASoC-add-NXP-Goodix-TFA2-TFA9874-DSP-bypass-amplifie.patch
+	0007-ASoC-wcd938x-initialise-the-TX-channel-HPF-on-analog.patch
+	0008-media-i2c-imx471-import-the-upstream-Sony-IMX471-sen.patch
+	0009-media-i2c-imx471-support-OF-and-a-board-sequenced-th.patch
+	0010-bus-mhi-host-add-a-Sahara-v2-firmware-loader-for-fla.patch
+	0011-bus-mhi-pci_generic-add-the-phone-embedded-SDX55-Fus.patch
+	0012-bus-mhi-pci_generic-don-t-re-enable-runtime-PM-on-no.patch
+	0013-net-wwan-expose-the-Qualcomm-remote-EFS-MHI-channel-.patch
+	0014-drm-msm-dp-don-t-gate-link-training-fallback-on-the-.patch
+	0015-drm-msm-dp-fix-NULL-dereference-reading-the-DP-test-.patch
+	0016-usb-typec-qcom-stop-logging-the-no-op-signal-transmi.patch
+	0017-ASoC-codecs-wcd938x-don-t-log-an-impedance-ramp-with.patch
+	0018-remoteproc-qcom_q6v5-don-t-log-a-repeated-handover-s.patch
+"
+builddir="$srcdir/linux-$_tag"
+
+prepare() {
+	default_prepare
+
+	# Whole-file board devicetree. If this ever stops matching what the
+	# kernel expects, scripts/check-dts-drift.sh shows what moved.
+	cp "$srcdir/$_kebab_dts" \
+		"$builddir/arch/arm64/boot/dts/qcom/$_kebab_dts"
+
+	cp "$srcdir/$_config" .config
+}
+
+build() {
+	unset LDFLAGS
+	make ARCH="$_carch" LLVM=1 \
+		KBUILD_BUILD_VERSION="$((pkgrel + 1 ))-$_flavor"
+}
+
+package() {
+	mkdir -p "$pkgdir"/boot
+
+	if [ -e "$builddir/arch/$_carch/boot/vmlinuz.efi" ]; then
+		# ZBOOT EFI decompressor for EFI booting
+		install -Dm644 "$builddir/arch/$_carch/boot/vmlinuz.efi" \
+			"$pkgdir/boot/linux.efi"
+
+		# Old GZIP'd kernel image for boot.img compatibility
+		install -Dm644 "$builddir/arch/$_carch/boot/vmlinuz" \
+			"$pkgdir/boot/vmlinuz"
+	else
+		echo "WARNING: CONFIG_ZBOOT not enabled!"
+		install -Dm644 "$builddir/arch/$_carch/boot/Image.gz" \
+			"$pkgdir/boot/vmlinuz"
+	fi
+
+	make modules_install dtbs_install \
+		ARCH="$_carch" \
+		LLVM=1 \
+		INSTALL_PATH="$pkgdir"/boot/ \
+		INSTALL_MOD_PATH="$pkgdir"/usr \
+		INSTALL_MOD_STRIP=1 \
+		INSTALL_DTBS_PATH="$pkgdir/boot/dtbs"
+	rm -f "$pkgdir"/usr/lib/modules/*/build "$pkgdir"/usr/lib/modules/*/source
+
+	install -D "$builddir"/include/config/kernel.release \
+		"$pkgdir"/usr/share/kernel/$_flavor/kernel.release
+}
+
+sha512sums="
+26d48ebd04c43e993bd00f9c055d40daf87b4919332c974e3c0db236135b522415e3dcf4b512e4028cc42da63fe4639991c3870bcb977967846db590a0b950b7  linux-postmarketos-qcom-sm8250-sm8250-7.2.0.tar.gz
+2f6e4d6dcf7eb27d481e91dcf96cd29d128260ff52e701875b043f5be63c7b66844ebc096e60c841d7ffcf87fdb7958fb3f31bc2950734d210c9cda79517262b  config-postmarketos-qcom-sm8250.aarch64
+896dfda82c6c03f4d91f9704374e2b07d05987f8afe87af2c55fa6e2c3e9ca28b5d7083cbe04629ea5e45d2f2b557f4621656eb0f4724da28e893726636ddef6  sm8250-oneplus-kebab.dts
+630baca53b90c82f5847376716cc20d61042b14448db6fecac200f1d40251a75714d629cb46797674907a0381ed6906aa5da3da68e1603cb165294bf3fb5941c  0001-drm-panel-add-Samsung-AMB655X-panel-driver.patch
+a70a332a48042b51afd29d833c863404ce9a6018ffe12f16119a446e7c1da2b652325ea81451c548d2b9a7f87ebd5708f2a942f96a2c1b48386d2483e152bd2a  0002-input-touchscreen-add-Synaptics-TCM-oncell-driver.patch
+97e70eaf453322bf9252069a6f9071d4e7ba5d59d8374e2eafc55e05149466bd63b412e90da5d77b52d3bce86218f4701573223c81c90ca4f0f0e224af830f8a  0003-regulator-add-MP2762A-OTG-VBUS-regulator.patch
+9ac0d5f7ab45b775ff9dfbe4ef4bbc12c74fdb2c7f70bda91839755231ea615561536e5e0234e0ead66fa41c3b4953496fd36e7d20d2825fa1184eba1ef5ffe3  0004-drm-msm-dp-don-t-apply-the-wide-bus-pixel-clock-halv.patch
+8971c3b30d4615c0f3ba3cd8ca2f2229e85a890cba3eb5f5480fd73dcc9c5516744f649473b8007db82a4dc0e9f6786668dbbe93475da25f232efdf9cb128024  0005-usb-typec-displayport-defer-instead-of-failing-when-.patch
+ca3bc94f33c5bee6ff4b3e72693cbd72051d2648157055347c71d0ca579dd17b29988660f0a7ed87394a97ab16d1c8ec5d8b2f19e29d7694095e9ecb4e5b2c63  0006-ASoC-add-NXP-Goodix-TFA2-TFA9874-DSP-bypass-amplifie.patch
+c35324c3a13d2914e7440f2a6f7b331b9d5b53380c5776839e30ff3920b5eef6953b414b4fc8faf1cc656d3deeec1e6e5b11570922ffdc4ee5bbcf10634f018c  0007-ASoC-wcd938x-initialise-the-TX-channel-HPF-on-analog.patch
+9fb060ed91dd051c8d98c8e089512a32dd7e9c920d8f0e5708075ce6c2d7c9128253a084eeaf4887ae81a5991088e4d144d0c5e39678b5ab5155bccef325508e  0008-media-i2c-imx471-import-the-upstream-Sony-IMX471-sen.patch
+6d5842303f06da720e295468358adaf3e0ecd5caec89dfa9628b077b3e048f28f0e426ccdfeea47c566b03b5d5d6390e1ab1c227526bf40c20ff9981a0e269d4  0009-media-i2c-imx471-support-OF-and-a-board-sequenced-th.patch
+9c1a673e1b673510b5f662e244401897b04ded2a861af020800b51a09afde4aecd58cabf13757c0dfede71829f7cbdd2d10b7cc8cf54d1a4a796952f4a2d2055  0010-bus-mhi-host-add-a-Sahara-v2-firmware-loader-for-fla.patch
+207c9aa345e44a262e25e8080f54b6c851d9350c14f5432f82f8f4293159e5fabaa5f802405547f8ecf3b539260d0cc8fe01e667bb707244e085377a604bd27b  0011-bus-mhi-pci_generic-add-the-phone-embedded-SDX55-Fus.patch
+413b5be47e8c3c28cae0957ed3e4d16b7b7fb59b40cbeaee87d64b8626de8a579d921db13a15812072c19bfd8e07c5f34d21049eac30622053b01613d8889f21  0012-bus-mhi-pci_generic-don-t-re-enable-runtime-PM-on-no.patch
+7360a0250a795a307c2844dd4d06989c447dcf280ca768a039a5da85f4ca7870c17785242e7e8ff79ff20ebcd2eaa8bd1502fcd1e789ee8b0e3cef699a3e25e4  0013-net-wwan-expose-the-Qualcomm-remote-EFS-MHI-channel-.patch
+ce0e3ab34b5aa4d15bba7f8b8b3d5bfa806def02c2bf3c97a4384e875715834d77cf36b0cd697b9629fa6d2152bbb0fe90d6f1bd2d8c774df44812a1a2edd5f6  0014-drm-msm-dp-don-t-gate-link-training-fallback-on-the-.patch
+b14e9dbfe3f54a786ab0ba0f2ee0fe7fd66ba77a22648de05c7b0f0538dacf2b5a95c4237b08b9c1b2404294977c8a8d50cf85b8e3ed9b79a92e6bf6d1f17290  0015-drm-msm-dp-fix-NULL-dereference-reading-the-DP-test-.patch
+f25a3dab2c761578c0fcb66ab76e293719e61bff2c8714ea43a8aa766ce60e827075a93a1d2d0d5a866d71469893881239c93859953a866a70975ed1fe678b04  0016-usb-typec-qcom-stop-logging-the-no-op-signal-transmi.patch
+3a7e40945f70dfea2106990625db159b1e530196e5a4ffe456f69fd51b0a3916c7cf690cb25ad98d6b7ff5d37adf890ddaf4580c7d8321edf91a4f8f4c747ef9  0017-ASoC-codecs-wcd938x-don-t-log-an-impedance-ramp-with.patch
+8d6ca750ff42086399e78f7a54d7d8df2d136e2b6b0d3872d94beff9d60dc44fc844b6cb2b00946316d2a73fc53b8048c3a12378a40bd45b0232133f35b1efd5  0018-remoteproc-qcom_q6v5-don-t-log-a-repeated-handover-s.patch
+"

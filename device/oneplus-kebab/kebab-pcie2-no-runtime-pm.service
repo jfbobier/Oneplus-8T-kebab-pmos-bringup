@@ -1,0 +1,18 @@
+[Unit]
+Description=Hold the PCIe2 host controller out of runtime suspend (SDX55 link dies otherwise)
+# Patch 0091 stopped the MHI M3 suspend, and ASPM is not implicated, but the
+# modem link still dropped at t~708s. The host controller platform device
+# 1c10000.pcie was still power/control=auto: pcie-qcom's runtime suspend turns
+# off the PIPE clocks and puts the PHY in low power, which takes the link with
+# it. Pin the whole path.
+DefaultDependencies=no
+After=sysinit.target
+Before=ModemManager.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c 'for p in /sys/devices/platform/soc@0/1c10000.pcie /sys/bus/pci/devices/0002:00:00.0 /sys/bus/pci/devices/0002:01:00.0; do [ -w $p/power/control ] && echo on > $p/power/control; done; exit 0'
+
+[Install]
+WantedBy=multi-user.target

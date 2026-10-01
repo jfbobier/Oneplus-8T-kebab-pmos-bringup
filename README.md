@@ -1,157 +1,233 @@
-# OnePlus 8T (kebab) — postmarketOS 7.2 / SM8250 bring-up
+# OnePlus 8T (kebab) — refactored postmarketOS tree
 
-Community handoff for a heavily patched **postmarketOS / Linux 7.2.0 SM8250
-baseline** used on the OnePlus 8T (`kebab`, KB2003). The repository captures the
-working research baseline, complete local kernel aport snapshot, SDX55 userspace
-source/configuration, and the technical findings behind the front-camera and
-modem work.
+A streamlined rebuild of the OnePlus 8T (`kebab`, KB2003 — SM8250 plus a
+discrete SDX55 modem) bring-up for postmarketOS on the
+`linux-postmarketos-qcom-sm8250` 7.2.0 kernel.
 
-**This is not presented as an upstream-ready patch series.** The accumulated
-kernel stack contains experiments, reverts and board-specific workarounds, and
-the cellular radio is not yet online. The purpose is to make the working state
-reviewable and reproducible enough for postmarketOS and SM8250/SDX55 maintainers
-to reuse the useful pieces.
+The bring-up stack was 81 active kernel patches: a journal of experiments,
+diagnostics, reverts and board description, in the order it was discovered.
+This tree is the same working state expressed as what it actually is.
 
-## Snapshot status — 2026-09-22
+| | Before | After |
+|---|---:|---:|
+| Kernel patches | 81 | **18** |
+| Board devicetree | ~45 patches | **1 file** |
+| Amplifier drivers bound to `nxp,tfa9874` | 2 | **1** |
+| Debug/diagnostic patches | 22 | **0** |
+| Workarounds kept but disabled | 0 | 3 (`kernel/optional/`) |
+| Lines in a boot `dmesg` | 3762 | **1251** |
 
-| Area | Status | Notes |
-|---|---|---|
-| Front camera (IMX471) | **Working** | Probe, media graph, CSI reception and capture verified. Six stacked software issues were identified; see [`docs/CAMERA.md`](docs/CAMERA.md). |
-| SDX55 boot / mission mode | **Working and stable** | Sahara boot and mission mode stay up with the M3/runtime-PM and EFS-channel fixes. |
-| SIM detection / PIN | **Working in the tested installation** | Guarded UIM provisioning and PIN automation are included; the SIM PIN itself is never included. |
-| SDX55 userspace sources | **Recovered** | Local `pm_service_native` and `tqftpserv-sdx55` package snapshots plus GPL `mhi_efs_sync` source are under [`userspace/`](userspace/). |
-| Cellular radio / data | **Not working** | MCFG selects and downloads the configuration, then aborts during apply after stack deactivation. |
-| GPS | **Blocked with modem/radio path** | Treated as the same modem configuration/application blocker in the handoff. |
-| Rear cameras | **Not brought up** | Sensor/bus map is documented; only IMX471 had an in-tree driver in the tested kernel baseline. |
-| Display/touch/Wi-Fi/BT/audio/USB/DP/charging | Patch series present | Included as part of the working baseline; this repo does not claim each patch is independently upstreamable. |
+**Built, flashed and verified on hardware on 2026-10-01**:
+`scripts/verify-on-device.sh` reports 26 passed, 0 failed, and a
+normalised diff of the full boot log against the pre-refactor kernel shows
+zero new error, warning or timeout lines.
 
-## Repository layout
+**Seven of the eighteen patches were found by testing this refactor**, not
+carried over from the bring-up stack, and all seven are generic fixes with
+no kebab specifics in them:
 
-- `kernel-aport/` — captured `linux-postmarketos-qcom-sm8250` APKBUILD, kernel
-  config and complete active patch set.
-- `userspace/` — tested SDX55 systemd/udev/UIM configuration plus recovered
-  builder-side source/package snapshots.
-- `docs/CAMERA.md` — front-camera root causes, final wiring and capture recipe.
-- `docs/MODEM.md` — SDX55 boot/EFS/SIM findings and remaining MCFG blocker.
-- `docs/PATCH_SERIES.md` — active patch order and historical patches.
-- `docs/REPRODUCIBILITY.md` — what can be rebuilt and what still depends on the
-  normal device firmware environment.
-- `docs/PRIVACY.md` — publication/privacy review and excluded data classes.
-- `docs/UPSTREAMING.md` — cleanup/splitting notes for maintainers.
-- `docs/archive/TECHNICAL_HANDOFF_2026-09-22.md` — sanitized long-form
-  engineering handoff.
-- `tools/` — local update/rollback helpers and the offline F3/EXT_MSG parser.
-- `scripts/check-aport-snapshot.sh` — verifies active kernel local sources and
-  APKBUILD SHA-512 entries.
-- `scripts/check-userspace-sources.sh` — verifies the captured local userspace
-  APKBUILDs and recovered MHI EFS source.
-- `scripts/privacy-scan.sh` — lightweight pre-publication identifier/secret scan.
+* `0014` makes DisplayPort link-training fallback reachable at all on
+  Type-C boards — it had been dead code because the retry loop gated
+  itself on a controller HPD register that always reads DISCONNECTED when
+  HPD arrives through a `drm_dp_hpd_bridge`. This made a 4K monitor work
+  that had never worked on this device before.
+* `0015` fixes a NULL dereference that oopsed the kernel on reading the DP
+  test debugfs files.
+* `0016`-`0018` stop three `dev_err` messages firing on entirely healthy
+  code paths, which is most of the 67% reduction in boot log size.
 
-## Reproducibility summary
+The two loudspeakers also play in **genuine stereo** for the first time;
+`docs/REGRESSIONS.md` AUDIO-3 has the two independent causes and the
+evidence for each.
 
-The kernel aport is self-contained with respect to its local sources: the
-captured `APKBUILD`, kernel config and **all 81 active patch files** are present.
-Five additional historical patches from the working aport directory are retained
-for traceability.
+[`docs/REGRESSIONS.md`](docs/REGRESSIONS.md) is the journal: every
+behavioural difference, what was verified and how, what was not, and the
+exact way back for each one. Read HW-1 for what is still untested — most
+of it needs a cable and a person.
 
-The SDX55 userspace source gap has also been closed at source level:
+## Layout
 
-- `userspace/packages/kebab-modem-tools/` is the exact captured local pmaports
-  package for `pm_service_native` and `diag_reader`;
-- `userspace/packages/tqftpserv-sdx55/` is the exact captured local package and
-  source tree used for the SDX55 remote-filesystem server;
-- `userspace/reference/mhi-efs-sync/` contains the GPL `mhi_efs_sync.c` source
-  recovered from the Apollo reference package, with commit/hash/build
-  provenance;
-- the tested phone-side systemd/udev/UIM configuration is preserved separately
-  under `userspace/systemd`, `userspace/udev`, and `userspace/bin`.
-
-The original phone ELF binaries are intentionally not distributed. Their hashes
-are recorded only to identify the tested installation. See
-[`userspace/PROVENANCE.md`](userspace/PROVENANCE.md) and
-[`docs/REPRODUCIBILITY.md`](docs/REPRODUCIBILITY.md).
-
-`0072-kebab-cci1-pin-clock-rate-37500000.patch` had a local-only patch-author
-address in its mail header. The public copy uses `kebab bring-up <local@invalid>`
-and the matching APKBUILD SHA-512 entry was updated; no functional patch content
-was changed.
-
-## High-value findings
-
-### IMX471 front camera
-
-The front camera was not a hardware failure. Six issues stacked on top of one
-another: VANA polarity, PM8008 voltage constraints, missing vendor-style rail
-sequencing, wrong CCI master, wrong I2C slave address, and CAMSS CSIPHY
-supply/lane configuration. The last blocker was the CAMSS endpoint using 1-based
-data lanes where the CSIPHY side required 0-based positions.
-
-See [`docs/CAMERA.md`](docs/CAMERA.md).
-
-### SDX55 modem
-
-Two late kernel fixes were especially important:
-
-- `0091-kebab-sdx55-fusion-no-m3.patch` — keeps the SDX55 out of M3 and prevents
-  runtime PM from being re-enabled on mission-mode entry.
-- `0092-kebab-mhi-bind-efs-channel.patch` — exposes the MHI EFS channel so
-  userspace can service the flashless RMTEFS firmware build.
-
-The recovered userspace shows the other half of the working setup:
-
-- `mhi_efs_sync` services the EFS channel;
-- `tqftpserv-sdx55` serves the modem remote filesystem on QRTR instance 3 and
-  includes retry behavior for transient send failures;
-- `pm_service_native` supplies the Peripheral Manager QMI service;
-- ModemManager rules keep the EFS transport out of normal control-port probing;
-- the UIM helper activates the primary-GW provisioning session and safely
-  automates PIN verification when configured locally.
-
-The remaining blocker is **not modem boot or SIM detection**. MCFG selects and
-transfers the configuration, requests protocol-stack deactivation, then returns
-to idle instead of completing apply/reactivation. See [`docs/MODEM.md`](docs/MODEM.md).
-
-## Validate the snapshot
-
-From the repository root:
-
-```sh
-./scripts/check-aport-snapshot.sh
-./scripts/check-userspace-sources.sh
-./scripts/privacy-scan.sh
+```
+kernel/              linux-postmarketos-qcom-sm8250 aport
+  APKBUILD
+  config-postmarketos-qcom-sm8250.aarch64
+  sm8250-oneplus-kebab.dts       the whole board devicetree, one file
+  0001..0018-*.patch             kernel changes that are really kernel changes
+  optional/                      dropped workarounds, one cp from being back
+device/oneplus-kebab/  device-oneplus-kebab aport (+ -audio, -modem)
+packages/              kebab-modem-tools, tqftpserv-sdx55
+scripts/               install, build/flash, on-device verification
+docs/                  REFACTOR.md   what moved where
+                       REGRESSIONS.md the journal
+                       KERNEL-BUMP.md moving to a newer SM8250 kernel
+                       research/      why the hardware needs what it needs
 ```
 
-## Upstreaming expectations
+### A note on provenance
 
-Useful pieces should be split and reviewed independently. In particular:
+Paths beginning `original/` in these documents refer to the 81-patch
+bring-up archive this work started from.
 
-- diagnostic/temporary camera patches and their reverts should be dropped from a
-  clean series;
-- the hard-coded locally administered Bluetooth address in `0014` is a bring-up
-  workaround, not a per-device address solution;
-- `0092` introduces a Qualcomm-specific EFS WWAN port and is not upstreamable as
-  that generic abstraction;
-- local power-sequencing changes around the backported IMX471 driver should be
-  reconciled with current upstream;
-- the tqftpserv source fixes are separable from kebab's `modem_a`/systemd
-  integration and may be useful beyond this board.
+Its **research notes are kept**, in [`docs/research/`](docs/research/) —
+they record *why* this hardware needs what it needs, which this tree
+deliberately does not repeat. `docs/research/MODEM.md` is the one to read
+if you are picking up the cellular-data problem, which is still unsolved.
 
-See [`docs/UPSTREAMING.md`](docs/UPSTREAMING.md).
+Its **code is not**: the 81 patches, its `userspace/` and its `tools/` are
+superseded, and keeping a buildable copy would invite someone to build
+from it. Citations beginning `original/kernel-aport/` or
+`original/userspace/` therefore point outside this repository; they are
+kept so a claim can be traced to its source rather than asserted.
 
-## Privacy / firmware policy
+## Build
 
-This public bundle intentionally contains **no SIM PIN value, IMEI, ICCID,
-EFS/NV dump, DIAG/QMDL capture, modem firmware image, Android partition image,
-private key, password, or access token**. A phone-side helper containing the
-factory IMEI was detected during collection and excluded in full.
+```bash
+scripts/install-to-pmaports.sh
+```
 
-Do not add raw `.qmdl`, modem `.mbn`, partition `.img`, EFS/NV dumps, or
-`/etc/kebab-sim-pin` to this repository.
+That is a dry run: it prints what it would replace in your pmaports
+checkout. Then:
+
+```bash
+scripts/install-to-pmaports.sh --force
+scripts/kebab-build.sh
+```
+
+`kebab-build.sh` installs the aports, checksums, builds the kernel and
+device packages, flashes, and then **resynchronises `/lib/modules` and
+verifies both sides match**. Add `--modem` to build the SDX55 userspace as
+well.
+
+The kernel reaches the device as an **apk**, not a tarball, so that apk's
+own database agrees with what is installed. Without that, apk still
+believes the postmarketOS repo kernel is present — and since it owns 584
+files under `usr/lib/modules/` plus `/boot/vmlinuz`, the next `apk fix` or
+`apk upgrade` lays the repo kernel's modules over the running one and
+Wi-Fi, audio, camera and the modem all vanish on the next boot. See
+`scripts/device-pin-kernel.sh`, and `scripts/check-kernel-drift.sh` to
+confirm nothing has moved:
+
+```bash
+scripts/device-pin-kernel.sh            # from the builder
+sudo scripts/check-kernel-drift.sh      # on the device
+```
+
+To put the userspace layer on a running device without building apks —
+udev rules, systemd units, helper scripts and the UCM profile:
+
+```bash
+scripts/install-userspace-on-device.sh   # run this ON the device
+```
+
+It is additive: everything lands under `/usr/lib` so any `/etc` override
+keeps winning, no unit's enablement is changed, and anything it replaces is
+backed up alongside with a `.pre-refactor` suffix.
+
+After flashing, smoke-test the subsystems this refactor touched:
+
+```bash
+sudo scripts/verify-on-device.sh   # run this ON the device
+```
+
+Each failure names the `docs/REGRESSIONS.md` item to read.
+
+Do not use `pmbootstrap flasher flash_kernel` on its own. It writes
+`boot.img` and nothing else, so every module keeps running the previous
+build; during bring-up that produced four separate phantom regressions,
+including Wi-Fi disappearing after a boot that had worked. The verification
+step at the end of `kebab-build.sh` exists to make that impossible to miss.
+
+Useful flags:
+
+```bash
+scripts/kebab-build.sh --no-flash       # build + sync modules, no fastboot
+scripts/kebab-build.sh --modules-only   # resync modules only
+PHONE=192.168.1.20 scripts/kebab-build.sh
+```
+
+## Firmware installed by hand
+
+Not in any package; reinstall after any rootfs reflash.
+
+```
+/lib/firmware/qcom/a650_{sqe.fw,gmu.bin}        Adreno; needs SQE >= 0x95,
+                                                the vendor blob is 0x93
+/lib/firmware/qcom/a650_zap.{mdt,b00,b01,b02,elf}   OEM-signed, from vendor.img
+/lib/firmware/ath11k/QCA6390/hw2.0/{amss.bin,m3.bin,board-2.bin}
+/lib/firmware/qca/{htbtfw20.tlv,htnv20.bin}
+/lib/firmware/qcom/sdx55m/*                     from the device's modem.img
+```
+
+The SDX55 blobs are OEM-signed and device-specific. They are not
+redistributable and are not in this repository.
+
+## Moving to a newer SM8250 kernel
+
+[`docs/KERNEL-BUMP.md`](docs/KERNEL-BUMP.md) is the runbook. The short
+version: only `pkgver` changes, and the one genuinely new step is
+
+```bash
+scripts/try-patches.sh /path/to/new/kernel/source
+```
+
+which reports each of the 18 patches as `APPLIES`, `FUZZ`, `CONFLICT` or
+`REDUNDANT`. `REDUNDANT` means upstream has taken the fix — delete the
+patch; that is a win, not a loss.
+
+The board devicetree is a whole file, so a kernel bump cannot conflict —
+and cannot deliver an upstream fix either.
+
+```bash
+scripts/check-dts-drift.sh            # what upstream changed underneath us
+```
+
+To re-prove that the consolidated file is equivalent to some reference
+build:
+
+```bash
+scripts/verify-dtb.sh reference.dtb candidate.dtb /path/to/scripts/dtc/dtc
+```
+
+It resolves phandle renumbering, so the output is the handful of real
+differences rather than a thousand shifted integers.
+
+## Re-enabling a dropped workaround
+
+Three patches were removed because the thing they worked around was fixed
+properly, or because they were symptoms of a bug fixed elsewhere. Each one
+names its symptom in its own commit message and in
+[`docs/REGRESSIONS.md`](docs/REGRESSIONS.md).
+
+```bash
+cp kernel/optional/0001-OPTIONAL-drm-msm-dp-keep-a-bandwidth-margin-*.patch kernel/
+# add the filename to source= in kernel/APKBUILD
+pmbootstrap checksum linux-postmarketos-qcom-sm8250
+```
+
+## Hardware status
+
+Carried over unchanged from the bring-up archive — this refactor changes
+how the work is expressed, not what works.
+
+| Area | Status |
+|---|---|
+| Display, touch, GPU | working |
+| Wi-Fi, Bluetooth, NFC | working (Bluetooth address handling changed — BT-1) |
+| USB-C, DisplayPort, OTG VBUS | working (two workarounds dropped — DP-1, DP-2) |
+| Audio: loudspeakers (both TFA9874 amps) | working, **stereo** — AUDIO-3 |
+| Audio: digital microphones (VA macro) | working |
+| Audio: in-call routing | needs an earpiece port for callaudiod — AUDIO-UCM |
+| Front camera (IMX471) | working |
+| Rear cameras | not brought up; no mainline drivers |
+| SDX55 boot, SIM, PIN | working and stable |
+| Cellular data, GPS | **not working** — MCFG aborts during apply; see `docs/research/MODEM.md` |
 
 ## Licensing
 
-Repository-authored material is distributed under **GPL-2.0-only** via the
-top-level [`LICENSE`](LICENSE). Kernel patches and imported source retain their
-own copyright/SPDX notices. In particular, `userspace/packages/tqftpserv-sdx55`
-is **BSD-3-Clause**, not relicensed to GPL; see
-[`LICENSES/BSD-3-Clause.txt`](LICENSES/BSD-3-Clause.txt).
+Repository-authored material is GPL-2.0-only. Kernel patches and imported
+source keep their own SPDX notices. `packages/tqftpserv-sdx55` is
+BSD-3-Clause and is not relicensed.
+
+No SIM PIN, IMEI, ICCID, EFS/NV dump, DIAG capture, modem firmware,
+partition image, key or token is in this repository, and none should be
+added.

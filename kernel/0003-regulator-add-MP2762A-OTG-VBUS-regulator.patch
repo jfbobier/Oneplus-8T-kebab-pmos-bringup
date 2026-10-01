@@ -1,0 +1,311 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: kebab refactor <kebab@local.invalid>
+Date: Wed, 30 Sep 2026 01:38:19 +0200
+Subject: [PATCH] regulator: add MP2762A OTG VBUS regulator
+
+The OnePlus 8T sources VBUS from the MP2762A charger's OTG boost. The
+PM8150B boost that the Type-C port manager would normally use exists to
+lift a single cell to 5 V and cannot work against this board's two-cell
+8.6 V pack, so every source attach logged "vbus vsafe5v fail" and no
+bus-powered device was ever enumerated.
+
+Expose just the boost as a regulator:
+
+  - enable/disable drive the external OTG gate GPIO and REG08[5], and
+    disable the charger watchdog so VBUS does not drop out mid-session;
+  - the OTG current limit (REG07[3:0], 250 mA steps) is driven from the
+    regulator's own min/max-microamp constraints instead of being a
+    compile-time constant. It is cached and programmed from .enable,
+    because the core applies machine constraints while the boost is
+    still off and REG07 only takes effect once REG08[5] is set;
+  - enable_time reports the measured 550 ms..1.1 s VBUS ramp, so
+    consumers that sample VBUS immediately after regulator_enable() --
+    which the Qualcomm Type-C port driver does, with a 250 ms poll --
+    see a rail that is genuinely up rather than warning and relying on
+    the port manager's retry.
+
+Boards can override the ramp with regulator-enable-ramp-delay.
+---
+ drivers/regulator/Kconfig                |   8 +
+ drivers/regulator/Makefile               |   1 +
+ drivers/regulator/mp2762-otg-regulator.c | 243 +++++++++++++++++++++++
+ 3 files changed, 252 insertions(+)
+ create mode 100644 drivers/regulator/mp2762-otg-regulator.c
+
+diff --git a/drivers/regulator/Kconfig b/drivers/regulator/Kconfig
+index a54a54919..1c97d0808 100644
+--- a/drivers/regulator/Kconfig
++++ b/drivers/regulator/Kconfig
+@@ -1889,4 +1889,12 @@ config REGULATOR_QCOM_LABIBB
+ 	  boost regulator and IBB can be used as a negative boost regulator
+ 	  for LCD display panel.
+ 
++config REGULATOR_MP2762_OTG
++	tristate "MP2762A OTG VBUS regulator"
++	depends on I2C
++	help
++	  OTG VBUS boost regulator on the Monolithic Power Systems MP2762A
++	  battery charger. Used on multi-cell phones where the PMIC's own
++	  boost cannot source VBUS from the pack voltage.
++
+ endif
+diff --git a/drivers/regulator/Makefile b/drivers/regulator/Makefile
+index 134eee274..2fc94321d 100644
+--- a/drivers/regulator/Makefile
++++ b/drivers/regulator/Makefile
+@@ -217,5 +217,6 @@ obj-$(CONFIG_REGULATOR_WM831X) += wm831x-ldo.o
+ obj-$(CONFIG_REGULATOR_WM8350) += wm8350-regulator.o
+ obj-$(CONFIG_REGULATOR_WM8400) += wm8400-regulator.o
+ obj-$(CONFIG_REGULATOR_WM8994) += wm8994-regulator.o
++obj-$(CONFIG_REGULATOR_MP2762_OTG) += mp2762-otg-regulator.o
+ 
+ ccflags-$(CONFIG_REGULATOR_DEBUG) += -DDEBUG
+diff --git a/drivers/regulator/mp2762-otg-regulator.c b/drivers/regulator/mp2762-otg-regulator.c
+new file mode 100644
+index 000000000..e2ff22e96
+--- /dev/null
++++ b/drivers/regulator/mp2762-otg-regulator.c
+@@ -0,0 +1,243 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * OTG VBUS boost regulator for the Monolithic Power Systems MP2762A
++ * battery charger.
++ *
++ * The MP2762A is a 1-4 cell NVDC charger with an integrated OTG boost. On
++ * two-cell phones such as the OnePlus 8T it is the only source capable of
++ * driving VBUS: the PMIC's own OTG boost exists to lift a single cell to
++ * 5 V and cannot be used with an 8.6 V pack.
++ *
++ * Only the OTG boost is modelled here. Charging itself is handled by the
++ * bootloader/firmware and reported through a separate fuel gauge, so this
++ * driver deliberately exposes a regulator and nothing else.
++ */
++
++#include <linux/bitops.h>
++#include <linux/gpio/consumer.h>
++#include <linux/i2c.h>
++#include <linux/module.h>
++#include <linux/regulator/driver.h>
++#include <linux/regulator/of_regulator.h>
++
++#define MP2762_REG07_OTG_ILIM		0x07
++#define MP2762_REG07_OTG_ILIM_MASK	GENMASK(3, 0)
++
++#define MP2762_REG08_CTRL		0x08
++#define MP2762_REG08_OTG_EN		BIT(5)
++
++#define MP2762_REG09_WATCHDOG		0x09
++#define MP2762_REG09_WATCHDOG_MASK	GENMASK(5, 4)
++#define MP2762_REG09_WATCHDOG_OFF	0x00
++
++/* REG07[3:0] is the OTG current limit in 250 mA steps. */
++#define MP2762_OTG_ILIM_STEP_UA		250000
++#define MP2762_OTG_ILIM_DEFAULT_UA	1500000
++
++/*
++ * Measured on an MP2762A driving a bus-powered hub: vSafe5V arrives between
++ * 550 ms and ~1.1 s after REG08[5] is set, far outside the Type-C
++ * tSrcTurnOn budget of 275 ms. Report that to the regulator core so
++ * consumers that sample VBUS right after regulator_enable() -- the Type-C
++ * port managers do -- see a rail that is actually up. Boards can override
++ * this with regulator-enable-ramp-delay.
++ */
++#define MP2762_OTG_ENABLE_TIME_US	1200000
++
++struct mp2762_otg {
++	struct i2c_client *client;
++	struct gpio_desc *otg_gate_gpio;
++	struct regulator_dev *rdev;
++	unsigned int ilim_ua;
++};
++
++static int mp2762_read(struct i2c_client *c, u8 reg)
++{
++	int ret = i2c_smbus_read_byte_data(c, reg);
++
++	if (ret < 0)
++		dev_err(&c->dev, "reg 0x%02x read failed: %d\n", reg, ret);
++	return ret;
++}
++
++static int mp2762_update(struct i2c_client *c, u8 reg, u8 mask, u8 val)
++{
++	int old = mp2762_read(c, reg);
++	int ret;
++
++	if (old < 0)
++		return old;
++
++	ret = i2c_smbus_write_byte_data(c, reg, (u8)((old & ~mask) | (val & mask)));
++	if (ret < 0)
++		dev_err(&c->dev, "reg 0x%02x write failed: %d\n", reg, ret);
++	return ret;
++}
++
++static int mp2762_otg_enable(struct regulator_dev *rdev)
++{
++	struct mp2762_otg *chg = rdev_get_drvdata(rdev);
++	int ret;
++
++	gpiod_set_value_cansleep(chg->otg_gate_gpio, 1);
++
++	ret = mp2762_update(chg->client, MP2762_REG07_OTG_ILIM,
++			    MP2762_REG07_OTG_ILIM_MASK,
++			    chg->ilim_ua / MP2762_OTG_ILIM_STEP_UA);
++	if (ret < 0)
++		goto err_gpio;
++
++	ret = mp2762_update(chg->client, MP2762_REG08_CTRL,
++			    MP2762_REG08_OTG_EN, MP2762_REG08_OTG_EN);
++	if (ret < 0)
++		goto err_gpio;
++
++	/*
++	 * The charger watchdog resets the OTG enable bit if nothing kicks it.
++	 * Nothing here does, so turn it off rather than have VBUS drop out
++	 * mid-session.
++	 */
++	ret = mp2762_update(chg->client, MP2762_REG09_WATCHDOG,
++			    MP2762_REG09_WATCHDOG_MASK,
++			    MP2762_REG09_WATCHDOG_OFF);
++	if (ret < 0) {
++		mp2762_update(chg->client, MP2762_REG08_CTRL,
++			      MP2762_REG08_OTG_EN, 0);
++		goto err_gpio;
++	}
++
++	dev_dbg(&chg->client->dev, "OTG VBUS enabled, ilim %u uA\n",
++		chg->ilim_ua);
++	return 0;
++
++err_gpio:
++	gpiod_set_value_cansleep(chg->otg_gate_gpio, 0);
++	return ret;
++}
++
++static int mp2762_otg_disable(struct regulator_dev *rdev)
++{
++	struct mp2762_otg *chg = rdev_get_drvdata(rdev);
++
++	gpiod_set_value_cansleep(chg->otg_gate_gpio, 0);
++
++	return mp2762_update(chg->client, MP2762_REG08_CTRL,
++			     MP2762_REG08_OTG_EN, 0);
++}
++
++static int mp2762_otg_is_enabled(struct regulator_dev *rdev)
++{
++	struct mp2762_otg *chg = rdev_get_drvdata(rdev);
++	int val = mp2762_read(chg->client, MP2762_REG08_CTRL);
++
++	if (val < 0)
++		return val;
++	return !!(val & MP2762_REG08_OTG_EN);
++}
++
++/*
++ * The limit is cached rather than written here. The core applies the
++ * machine constraints while the boost is still off, and REG07 only has an
++ * effect once REG08[5] is set, so programming it from .enable keeps all
++ * register access inside the window where the charger is known to be
++ * responsive.
++ */
++static int mp2762_otg_set_current_limit(struct regulator_dev *rdev,
++					int min_uA, int max_uA)
++{
++	struct mp2762_otg *chg = rdev_get_drvdata(rdev);
++	unsigned int sel = max_uA / MP2762_OTG_ILIM_STEP_UA;
++
++	if (sel > MP2762_REG07_OTG_ILIM_MASK)
++		sel = MP2762_REG07_OTG_ILIM_MASK;
++
++	if ((int)(sel * MP2762_OTG_ILIM_STEP_UA) < min_uA)
++		return -EINVAL;
++
++	chg->ilim_ua = sel * MP2762_OTG_ILIM_STEP_UA;
++
++	/*
++	 * The machine constraints are applied from regulator_register(),
++	 * before chg->rdev is assigned and while the boost is off; that case
++	 * is covered by .enable. A later runtime change takes effect at once.
++	 */
++	if (chg->rdev && mp2762_otg_is_enabled(rdev) > 0)
++		return mp2762_update(chg->client, MP2762_REG07_OTG_ILIM,
++				     MP2762_REG07_OTG_ILIM_MASK, sel);
++
++	return 0;
++}
++
++static int mp2762_otg_get_current_limit(struct regulator_dev *rdev)
++{
++	struct mp2762_otg *chg = rdev_get_drvdata(rdev);
++
++	return chg->ilim_ua;
++}
++
++static const struct regulator_ops mp2762_otg_ops = {
++	.enable = mp2762_otg_enable,
++	.disable = mp2762_otg_disable,
++	.is_enabled = mp2762_otg_is_enabled,
++	.set_current_limit = mp2762_otg_set_current_limit,
++	.get_current_limit = mp2762_otg_get_current_limit,
++};
++
++static const struct regulator_desc mp2762_otg_desc = {
++	.name = "otg-vbus",
++	.of_match = "otg-vbus",
++	.ops = &mp2762_otg_ops,
++	.type = REGULATOR_VOLTAGE,
++	.owner = THIS_MODULE,
++	.fixed_uV = 5000000,
++	.n_voltages = 1,
++	.enable_time = MP2762_OTG_ENABLE_TIME_US,
++};
++
++static int mp2762_otg_probe(struct i2c_client *client)
++{
++	struct device *dev = &client->dev;
++	struct regulator_config config = { .dev = dev };
++	struct mp2762_otg *chg;
++
++	chg = devm_kzalloc(dev, sizeof(*chg), GFP_KERNEL);
++	if (!chg)
++		return -ENOMEM;
++
++	chg->client = client;
++	chg->ilim_ua = MP2762_OTG_ILIM_DEFAULT_UA;
++
++	chg->otg_gate_gpio = devm_gpiod_get(dev, "otg-gate", GPIOD_OUT_LOW);
++	if (IS_ERR(chg->otg_gate_gpio))
++		return dev_err_probe(dev, PTR_ERR(chg->otg_gate_gpio),
++				     "failed to get otg-gate gpio\n");
++
++	config.driver_data = chg;
++	config.of_node = dev->of_node;
++
++	chg->rdev = devm_regulator_register(dev, &mp2762_otg_desc, &config);
++	if (IS_ERR(chg->rdev))
++		return dev_err_probe(dev, PTR_ERR(chg->rdev),
++				     "failed to register otg-vbus regulator\n");
++
++	i2c_set_clientdata(client, chg);
++	return 0;
++}
++
++static const struct of_device_id mp2762_otg_of_match[] = {
++	{ .compatible = "mps,mp2762a" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, mp2762_otg_of_match);
++
++static struct i2c_driver mp2762_otg_driver = {
++	.driver = {
++		.name = "mp2762-otg-regulator",
++		.of_match_table = mp2762_otg_of_match,
++	},
++	.probe = mp2762_otg_probe,
++};
++module_i2c_driver(mp2762_otg_driver);
++
++MODULE_DESCRIPTION("MP2762A OTG VBUS regulator");
++MODULE_LICENSE("GPL");
