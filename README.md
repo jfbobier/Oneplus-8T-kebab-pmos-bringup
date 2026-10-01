@@ -202,6 +202,7 @@ pmbootstrap checksum linux-postmarketos-qcom-sm8250
 | [`docs/REGRESSIONS.md`](docs/REGRESSIONS.md) | the journal — every known behavioural quirk, what was verified and how, what was not, and the exact way back for each one. Items are referenced by tag (`AUDIO-3`, `DP-1`, `MODEM-2`, …) from the verification script and the commit history. |
 | [`docs/REFACTOR.md`](docs/REFACTOR.md) | what lives where, and why each of the 18 patches cannot be configuration instead |
 | [`docs/KERNEL-BUMP.md`](docs/KERNEL-BUMP.md) | moving this tree onto a newer SM8250 kernel |
+| [`docs/UPSTREAMING.md`](docs/UPSTREAMING.md) | getting this work into postmarketOS and mainline |
 | [`docs/research/`](docs/research/) | why the hardware needs what it needs — modem, camera and general findings from the bring-up |
 
 This tree started as 81 incremental kernel patches and is the same working

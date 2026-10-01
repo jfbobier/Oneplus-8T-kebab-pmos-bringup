@@ -21,6 +21,10 @@ for traceability). This tree is:
 
 `original/` is the unmodified bring-up archive and is never written to.
 
+For getting this work into postmarketOS and mainline, see
+[UPSTREAMING.md](UPSTREAMING.md) — note that most of it does **not** go to
+pmaports: that project's sm8250 kernel aport carries no patches at all.
+
 To move this tree onto a newer SM8250 kernel, see
 [KERNEL-BUMP.md](KERNEL-BUMP.md). The short version: only `pkgver`
 changes, and the one new step is `scripts/try-patches.sh`, which tells you

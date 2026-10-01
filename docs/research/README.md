@@ -14,7 +14,7 @@ what was believed at the time.
 | [CAMERA.md](CAMERA.md) | IMX471 rails, CCI bus and slave address — the six root causes behind patches 0008/0009 |
 | [MODEM-summary.md](MODEM-summary.md) | the short version of MODEM.md |
 | [PATCH_SERIES.md](PATCH_SERIES.md) | what each of the original 81 patches did. The mapping to the current 18 is in [../REFACTOR.md](../REFACTOR.md). |
-| [UPSTREAMING.md](UPSTREAMING.md) | what was considered upstreamable before the refactor |
+| [UPSTREAMING.md](UPSTREAMING.md) | what was considered upstreamable before the refactor. Superseded by [../UPSTREAMING.md](../UPSTREAMING.md), which is the current plan. |
 | [REPRODUCIBILITY.md](REPRODUCIBILITY.md) | how the original archive was built |
 | [PRIVACY.md](PRIVACY.md) | what was excluded from publication and why |
 | [TECHNICAL_HANDOFF_2026-09-22.md](TECHNICAL_HANDOFF_2026-09-22.md) | the handoff written at the end of the bring-up |
