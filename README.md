@@ -66,6 +66,37 @@ Smaller caveats worth knowing before you file a bug:
 * **Some firmware must be installed by hand** — see below. It is
   OEM-signed and device-specific, so it is not in this repository.
 
+## Prebuilt images
+
+If you have a kebab and would rather not build a kernel, the
+[latest release](../../releases/latest) has `boot.img`, the kernel
+modules and the userspace packages, built from this tree and used on a
+real device.
+
+You still need pmbootstrap: the rootfs that goes on `super` carries your
+username, password, hostname and SSH keys, so nobody else can build it
+for you. The release covers the kernel side only.
+
+Order matters, and it is not the obvious one:
+
+1. `pmbootstrap init` and `pmbootstrap install` — build the rootfs
+2. `pmbootstrap flasher flash_rootfs` and `flash_dtbo`
+3. `pmbootstrap flasher flash_kernel` — the **stock** kernel, and boot it
+4. install the kernel apk from the release over SSH, and pin it
+5. `fastboot flash boot boot.img` from the release, reboot, then add the
+   userspace packages
+
+Step 3 is the one people will want to skip. Most of this device is kernel
+modules, and modules that do not match the running kernel are rejected —
+so flashing this `boot.img` onto a rootfs still carrying the postmarketOS
+repo kernel's modules loses USB networking, Wi-Fi, audio and the modem at
+once. The screen and touchscreen are built in, so you end up looking at a
+working display with no way to copy the modules across. Booting the stock
+kernel once gives you the network that step 4 needs.
+
+The release notes have the full version, including the firmware blobs you
+have to extract from your own device.
+
 ## Layout
 
 ```
