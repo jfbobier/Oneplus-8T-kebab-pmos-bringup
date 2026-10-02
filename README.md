@@ -4,9 +4,9 @@ Bring-up tree for the OnePlus 8T (`kebab`, KB2003 — SM8250 plus a discrete
 SDX55 modem) on postmarketOS with the `linux-postmarketos-qcom-sm8250`
 7.2.0 kernel.
 
-18 kernel patches, one board devicetree, and the userspace rules and ALSA
-profile the hardware needs. Built, flashed and verified on hardware on
-2026-10-01: `scripts/verify-on-device.sh` reports 26 passed, 0 failed.
+20 kernel patches, one board devicetree, and the userspace rules and ALSA
+profile the hardware needs. Built, flashed and verified on hardware:
+`scripts/verify-on-device.sh` reports 26 passed, 0 failed.
 
 ## Hardware status
 
@@ -19,7 +19,8 @@ profile the hardware needs. Built, flashed and verified on hardware on
 | Audio: in-call routing | needs an earpiece port for callaudiod |
 | USB-C, OTG VBUS | working |
 | Battery level reporting | working (`bq27541` fuel gauge) |
-| DisplayPort over USB-C | working, including 1440p on a monitor that previously hung the device |
+| DisplayPort over USB-C | working — 2560x1440, on the native port and through a Thunderbolt dock |
+| Audio over DisplayPort | working |
 | Front camera (IMX471) | working |
 | Rear cameras | not brought up — no mainline drivers |
 | SDX55 modem boot, SIM, PIN | working and stable |
@@ -34,6 +35,19 @@ what was tried; start at §4.4 if you want to pick it up.
 
 Smaller caveats worth knowing before you file a bug:
 
+* **A monitor's USB hub and its picture can be mutually exclusive.** A
+  USB-C monitor can carry DisplayPort and USB at the same time only if it
+  advertises DP pin assignment D. Many advertise only C and E, which are
+  both "four lanes to DP, no USB SuperSpeed" — and such monitors tend to
+  drop their USB 2.0 hub as well, so a keyboard and mouse plugged into the
+  monitor disappear while the picture is up. The phone's own devicetree
+  already advertises C, D and E, so when D is missing it is always the
+  monitor. `kebab-dp-mode display|usb|status` switches between the two
+  without replugging. DP-3 in the journal, including how to read a
+  monitor's capability VDO before blaming it.
+* **A dock may take the audio.** A dock in the path usually exposes its
+  own USB audio bridge, which PipeWire treats as a perfectly good sink, so
+  DisplayPort audio will not be selected for you — pick it explicitly.
 * **DisplayPort mode selection.** After the link falls back to fewer lanes
   or a lower rate, the driver still advertises modes sized for the sink's
   maximum rather than the trained link, so a 4K monitor may be offered
@@ -59,7 +73,7 @@ kernel/              linux-postmarketos-qcom-sm8250 aport
   APKBUILD
   config-postmarketos-qcom-sm8250.aarch64
   sm8250-oneplus-kebab.dts       the whole board devicetree, one file
-  0001..0018-*.patch             kernel changes that are really kernel changes
+  0001..0020-*.patch             kernel changes that are really kernel changes
   optional/                      dropped workarounds, one cp from being back
 device/oneplus-kebab/  device-oneplus-kebab aport (+ -audio, -modem)
 packages/              kebab-modem-tools, tqftpserv-sdx55
@@ -161,7 +175,7 @@ version: only `pkgver` changes, and the one genuinely new step is
 scripts/try-patches.sh /path/to/new/kernel/source
 ```
 
-which reports each of the 18 patches as `APPLIES`, `FUZZ`, `CONFLICT` or
+which reports each of the 20 patches as `APPLIES`, `FUZZ`, `CONFLICT` or
 `REDUNDANT`. `REDUNDANT` means upstream has taken the fix — delete the
 patch; that is a win, not a loss.
 
@@ -200,7 +214,7 @@ pmbootstrap checksum linux-postmarketos-qcom-sm8250
 | | |
 |---|---|
 | [`docs/REGRESSIONS.md`](docs/REGRESSIONS.md) | the journal — every known behavioural quirk, what was verified and how, what was not, and the exact way back for each one. Items are referenced by tag (`AUDIO-3`, `DP-1`, `MODEM-2`, …) from the verification script and the commit history. |
-| [`docs/REFACTOR.md`](docs/REFACTOR.md) | what lives where, and why each of the 18 patches cannot be configuration instead |
+| [`docs/REFACTOR.md`](docs/REFACTOR.md) | what lives where, and why each of the 20 patches cannot be configuration instead |
 | [`docs/KERNEL-BUMP.md`](docs/KERNEL-BUMP.md) | moving this tree onto a newer SM8250 kernel |
 | [`docs/UPSTREAMING.md`](docs/UPSTREAMING.md) | getting this work into postmarketOS and mainline |
 | [`docs/research/`](docs/research/) | why the hardware needs what it needs — modem, camera and general findings from the bring-up |
@@ -208,9 +222,12 @@ pmbootstrap checksum linux-postmarketos-qcom-sm8250
 This tree started as 81 incremental kernel patches and is the same working
 state consolidated: the board description became one devicetree, the
 diagnostics and reverts went away, and policy that had been patched into
-the kernel became packaged configuration. Nine of the remaining 18 patches
-are generic fixes with no kebab specifics in them and are candidates for
-upstream as they stand.
+the kernel became packaged configuration. Eleven of the remaining 20
+patches are generic fixes with no kebab specifics in them and are
+candidates for upstream as they stand — including the one that makes
+audio over DisplayPort work at all, which is an ASoC/DRM ordering fix
+that applies to any board whose CPU-side DAI needs the sink's audio clock
+running before it can start.
 
 Paths beginning `original/` in the documents above refer to that
 81-patch archive. Its research notes are kept, under
