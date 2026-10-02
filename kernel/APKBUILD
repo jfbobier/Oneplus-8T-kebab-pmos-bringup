@@ -5,7 +5,7 @@ maintainer="Jianhua Lu <lujianhua000@gmail.com>"
 _flavor="postmarketos-qcom-sm8250"
 pkgname=linux-$_flavor
 pkgver=7.2.0
-pkgrel=25
+pkgrel=26
 pkgdesc="Mainline kernel fork for SM8250"
 arch="aarch64"
 _carch="arm64"
@@ -69,6 +69,7 @@ source="
 	0018-remoteproc-qcom_q6v5-don-t-log-a-repeated-handover-s.patch
 	0019-drm-display-let-a-bridge-configure-sink-audio-from-h.patch
 	0020-drm-msm-dp-don-t-log-an-expected-link-training-fallb.patch
+	0021-drm-msm-dp-validate-modes-against-the-trained-link-n.patch
 "
 builddir="$srcdir/linux-$_tag"
 
@@ -143,4 +144,5 @@ f25a3dab2c761578c0fcb66ab76e293719e61bff2c8714ea43a8aa766ce60e827075a93a1d2d0d5a
 8d6ca750ff42086399e78f7a54d7d8df2d136e2b6b0d3872d94beff9d60dc44fc844b6cb2b00946316d2a73fc53b8048c3a12378a40bd45b0232133f35b1efd5  0018-remoteproc-qcom_q6v5-don-t-log-a-repeated-handover-s.patch
 122b7ae91b1149bcf6d4b5c675636805def070ee5471fe3487d3205bdd6495c4265e9f49f32f3fcd46d3fa9254cddc6092d116e59fe5723efdedd587c8e53955  0019-drm-display-let-a-bridge-configure-sink-audio-from-h.patch
 b3ffdac70bb0b303d4eeac9366ef6db65af42056a08ca30b98f3a7b60eecf8d8ab2efff2fe05d30925ca98d015bead7df7def07b037e026903d24a9169a757b8  0020-drm-msm-dp-don-t-log-an-expected-link-training-fallb.patch
+5882980122b6dfc188666e028aa9a7193c473756d54e2be4bf31949ec6bb3e95e41f2b181fca49056899d3e1038e3b8ef9e999722611e526f4d64ada1e286340  0021-drm-msm-dp-validate-modes-against-the-trained-link-n.patch
 "

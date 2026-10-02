@@ -782,11 +782,48 @@ at 30 bpp is 7.2 Gbps, 84% of the 8.64 Gbps a 2-lane HBR2 link carries.
 So the link and the hardware are fine; only the mode *selection* is wrong,
 exactly as diagnosed.
 
-What remains is the automatic case: GNOME is still offered 3840x2160@60
-because the mode list is sized on the sink's 4 lanes, picks it, and gets a
-black screen until the user intervenes. The fix is to re-probe the
-connector after a fallback changes the lane count or rate, so the
-advertised list reflects the link that actually trained. Not written yet.
+### Fixed in r26 by patch 0021 — the half that carries no risk
+
+`msm_dp_bridge_mode_valid()` now takes the **lower** of the sink's claim
+(`panel->link_info`) and the trained link (`link->link_params`). Two
+properties make that safe, which mattered because the brief was explicitly
+"keep the stability we have achieved":
+
+* `link_params` is reset to the sink's maximum at the top of every
+  `msm_dp_ctrl_on_link()` and then walked down by the retry loop, so it is
+  accurate after a fallback and a no-op before the first training — it
+  cannot under-report on a fresh link.
+* The change can only ever *remove* modes, never add one, so it cannot
+  cause the link to attempt anything it was not already attempting.
+
+**Verified on hardware 2026-10-02 (`#27`):** with a monitor whose link
+trained at full width, 4K@60 was selected and ran stably — the filter
+correctly stayed out of the way. Zero link-training errors in the whole
+session.
+
+### The other half is deliberately not done
+
+Making userspace re-probe *automatically* after a fallback needs the
+link-status property. That cannot be set from
+`msm_dp_bridge_atomic_enable()`, which is where training happens, because
+the modeset locks are already held and
+`drm_connector_set_link_status_property()` takes `connection_mutex` — it
+would deadlock. This is exactly what the existing upstream
+
+```c
+// TODO: schedule drm_connector_set_link_status_property()
+```
+
+refers to: it needs a deferred work item, cancellation on unbind, and a
+hotplug fired into the modeset path. That is a moderate-risk change to the
+subsystem that was just stabilised, so it was left out by choice rather
+than oversight.
+
+**Practical difference:** a black screen can still happen on first plug
+when the link does fall back, but any re-probe after that — opening
+GNOME's Displays panel, which is what one does anyway — now offers only
+modes the link can carry. The failure is self-correcting instead of a
+trap.
 
 ### Superseded by the above: fallback is unreachable on every Type-C DP board
 
@@ -1217,6 +1254,25 @@ usb 3-1.1.1.2: 37:0: failed to get current value for ch 0 (-32)
 `-32` is EPIPE — the device stalls those UAC control reads. Its audio
 works anyway. Nothing to do with this tree; listed here so it is not
 mistaken for one of ours.
+
+### One unexplained failure, 2026-10-02 (`#27`)
+
+A single `AFE enable for port 0x6020 failed -110` at t=264s — the
+pre-0021 failure mode — during a session that was otherwise clean. The
+timeline puts it 148s after the monitor was plugged and 25s before it was
+unplugged, so not at either transition.
+
+**Unconfirmed hypothesis:** it coincides with changing the resolution to
+4K. A modeset tears down and re-establishes DP audio, and
+`msm_dp_audio_prepare()` returns `-EINVAL` when
+`msm_dp_display->power_on` is false, which it transiently is mid-modeset.
+Patch 0019 fixed ordering *within* a stream start; it does nothing about
+a race *across* a modeset. If that is right, audio should recover by
+itself on the next stream start rather than staying dead.
+
+**To confirm or kill it:** get audio playing to the monitor, change
+resolution, and see whether sound returns without intervention. One
+sample is not enough to act on.
 
 ### Speaker and HDMI are mutually exclusive
 

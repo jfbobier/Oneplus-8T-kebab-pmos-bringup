@@ -4,7 +4,7 @@ Bring-up tree for the OnePlus 8T (`kebab`, KB2003 — SM8250 plus a discrete
 SDX55 modem) on postmarketOS with the `linux-postmarketos-qcom-sm8250`
 7.2.0 kernel.
 
-20 kernel patches, one board devicetree, and the userspace rules and ALSA
+21 kernel patches, one board devicetree, and the userspace rules and ALSA
 profile the hardware needs. Built, flashed and verified on hardware:
 `scripts/verify-on-device.sh` reports 26 passed, 0 failed.
 
@@ -19,7 +19,7 @@ profile the hardware needs. Built, flashed and verified on hardware:
 | Audio: in-call routing | needs an earpiece port for callaudiod |
 | USB-C, OTG VBUS | working |
 | Battery level reporting | working (`bq27541` fuel gauge) |
-| DisplayPort over USB-C | working — 2560x1440, on the native port and through a Thunderbolt dock |
+| DisplayPort over USB-C | working — up to 4K@60 on the native port, and through a Thunderbolt dock |
 | Audio over DisplayPort | working |
 | Front camera (IMX471) | working |
 | Rear cameras | not brought up — no mainline drivers |
@@ -49,11 +49,14 @@ Smaller caveats worth knowing before you file a bug:
 * **A dock may take the audio.** A dock in the path usually exposes its
   own USB audio bridge, which PipeWire treats as a perfectly good sink, so
   DisplayPort audio will not be selected for you — pick it explicitly.
-* **DisplayPort mode selection.** After the link falls back to fewer lanes
-  or a lower rate, the driver still advertises modes sized for the sink's
-  maximum rather than the trained link, so a 4K monitor may be offered
-  3840x2160 and show black until you pick a lower mode by hand. DP-1/DP-2
-  in the journal.
+* **DisplayPort mode selection.** Modes are now sized against the link
+  that actually trained, so a cable that only carries two lanes no longer
+  gets offered modes it cannot drive. What is *not* done is the automatic
+  re-probe after a fallback, which needs the DRM link-status property and
+  a deferred hotplug — so a black screen is still possible on first plug,
+  and clears as soon as anything re-probes (opening GNOME's Displays
+  panel is enough). DP-1/DP-2 in the journal explains why that half was
+  left out.
 * **Two boot `WARNING`s** at ~0.6 s from the DSI PHY PLL, which taint the
   kernel. They are upstream, harmless, and the display works because the
   failed clock prepare unwinds cleanly. NOISE-1 explains why fixing them
@@ -111,7 +114,7 @@ kernel/              linux-postmarketos-qcom-sm8250 aport
   APKBUILD
   config-postmarketos-qcom-sm8250.aarch64
   sm8250-oneplus-kebab.dts       the whole board devicetree, one file
-  0001..0020-*.patch             kernel changes that are really kernel changes
+  0001..0021-*.patch             kernel changes that are really kernel changes
   optional/                      dropped workarounds, one cp from being back
 device/oneplus-kebab/  device-oneplus-kebab aport (+ -audio, -modem)
 packages/              kebab-modem-tools, tqftpserv-sdx55
@@ -252,7 +255,7 @@ version: only `pkgver` changes, and the one genuinely new step is
 scripts/try-patches.sh /path/to/new/kernel/source
 ```
 
-which reports each of the 20 patches as `APPLIES`, `FUZZ`, `CONFLICT` or
+which reports each of the 21 patches as `APPLIES`, `FUZZ`, `CONFLICT` or
 `REDUNDANT`. `REDUNDANT` means upstream has taken the fix — delete the
 patch; that is a win, not a loss.
 
@@ -291,7 +294,7 @@ pmbootstrap checksum linux-postmarketos-qcom-sm8250
 | | |
 |---|---|
 | [`docs/REGRESSIONS.md`](docs/REGRESSIONS.md) | the journal — every known behavioural quirk, what was verified and how, what was not, and the exact way back for each one. Items are referenced by tag (`AUDIO-3`, `DP-1`, `MODEM-2`, …) from the verification script and the commit history. |
-| [`docs/REFACTOR.md`](docs/REFACTOR.md) | what lives where, and why each of the 20 patches cannot be configuration instead |
+| [`docs/REFACTOR.md`](docs/REFACTOR.md) | what lives where, and why each of the 21 patches cannot be configuration instead |
 | [`docs/KERNEL-BUMP.md`](docs/KERNEL-BUMP.md) | moving this tree onto a newer SM8250 kernel |
 | [`docs/UPSTREAMING.md`](docs/UPSTREAMING.md) | getting this work into postmarketOS and mainline |
 | [`docs/research/`](docs/research/) | why the hardware needs what it needs — modem, camera and general findings from the bring-up |
@@ -299,7 +302,7 @@ pmbootstrap checksum linux-postmarketos-qcom-sm8250
 This tree started as 81 incremental kernel patches and is the same working
 state consolidated: the board description became one devicetree, the
 diagnostics and reverts went away, and policy that had been patched into
-the kernel became packaged configuration. Eleven of the remaining 20
+the kernel became packaged configuration. Twelve of the remaining 21
 patches are generic fixes with no kebab specifics in them and are
 candidates for upstream as they stand — including the one that makes
 audio over DisplayPort work at all, which is an ASoC/DRM ordering fix

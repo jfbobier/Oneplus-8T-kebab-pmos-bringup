@@ -15,7 +15,7 @@ for traceability). This tree is:
 |---|---:|---|
 | Kernel `.config` | 1 file | drivers and features that exist, enabled |
 | Board devicetree | 1 file | everything that is board wiring |
-| Kernel patches | 20 | changes that are genuinely missing C code or generic bugs |
+| Kernel patches | 21 | changes that are genuinely missing C code or generic bugs |
 | Optional patches | 3 | dropped workarounds, kept one `cp` away |
 | Userspace | 3 packages | policy, service startup, per-device identity |
 
@@ -49,7 +49,7 @@ file was compared against the DTB from the original 81-patch stack with
 phandle renumbering resolved (`scripts/verify-dtb.sh`). Five differences,
 all intentional, all in [REGRESSIONS.md](REGRESSIONS.md).
 
-## The 20 kernel patches
+## The 21 kernel patches
 
 | # | Patch | Why it cannot be configuration |
 |---|---|---|
@@ -73,10 +73,11 @@ all intentional, all in [REGRESSIONS.md](REGRESSIONS.md).
 | 0018 | `remoteproc/qcom_q6v5`: repeated handover logged as an error | generic log-level bug |
 | 0019 | `drm/display`: configure sink audio from hw_params | generic ordering bug |
 | 0020 | `drm/msm/dp`: expected link-training fallback logged as errors | generic log-level bug |
+| 0021 | `drm/msm/dp`: modes sized on the sink's claim, not the trained link | generic validator bug |
 
-Patches 0004, 0005, 0007, 0012, 0014, 0015, 0016, 0017, 0018, 0019 and
-0020 are generic fixes with no kebab specifics in them, and are the
-eleven most directly upstreamable. 0016-0018 are pure `dev_err` -> `dev_dbg`
+Patches 0004, 0005, 0007, 0012, 0014, 0015, 0016, 0017, 0018, 0019, 0020
+and 0021 are generic fixes with no kebab specifics in them, and are the
+twelve most directly upstreamable. 0016-0018 are pure `dev_err` -> `dev_dbg`
 demotions on paths that are reached during normal, healthy operation;
 each carries a comment saying why the handler is empty or why the
 condition is expected, because that is the part a reviewer needs.
