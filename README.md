@@ -23,6 +23,7 @@ profile the hardware needs. Built, flashed and verified on hardware:
 | Audio over DisplayPort | working |
 | Front camera (IMX471) | working |
 | Rear cameras | not brought up — no mainline drivers |
+| Hardware video decode (Venus) | **do not enable** — decodes briefly, then the firmware faults and the device reboots (VIDEO-1) |
 | SDX55 modem boot, SIM, PIN | working and stable |
 | Cellular data, GPS | **not working** |
 
@@ -62,6 +63,12 @@ Smaller caveats worth knowing before you file a bug:
   state are not under kernel control and are not reported — only the fuel
   gauge's battery level is. The device does charge; nothing in Linux
   manages it.
+* **VAAPI cannot work on this SoC.** Venus is a stateful V4L2 M2M
+  decoder; the only VAAPI driver available (`libva-v4l2request`) drives
+  stateless Request API decoders, and no VAAPI driver for Venus exists.
+  `vaInitialize failed with error code 1` is the correct answer, not a
+  misconfiguration. Hardware decode via V4L2 M2M does partly work but
+  crashes the device — see VIDEO-1.
 * **Rear cameras and in-call audio routing** are not brought up at all.
 * **Some firmware must be installed by hand** — see below. It is
   OEM-signed and device-specific, so it is not in this repository.

@@ -1660,6 +1660,101 @@ stereo fix of AUDIO-3 took effect.
 
 ---
 
+## VIDEO-1 — hardware video decode half-works and destabilises the device
+
+**Status:** investigated 2026-10-02, **left disabled**. Software decode
+is unaffected and is what the system uses.
+
+### The VAAPI error is not fixable, and not a configuration problem
+
+```
+libva-v4l2request: no V4L2 Request API decoder found
+vaInitialize failed with error code 1
+```
+
+That message is correct. Venus is a **stateful** V4L2 memory-to-memory
+decoder:
+
+```
+Capabilities : Video Memory-to-Memory Multiplanar
+Output  (in) : H264  VP80  VP90  HEVC  MPG2      compressed bitstream
+Capture (out): NV12  Q08C
+```
+
+You feed it a bitstream and it returns frames. `libva-v4l2request` drives
+only **stateless Request API** decoders — Cedrus, Hantro, RKVDEC — which
+expose per-slice controls and require media request objects. Venus
+exposes neither, so the library enumerates, finds nothing it can use, and
+says so. It is also the only VAAPI driver installed, and **no VAAPI
+driver for Qualcomm Venus exists upstream**. Nothing can be configured to
+change this.
+
+### Hardware decode does work — for about a second and a half
+
+The correct path is V4L2 M2M. GStreamer probes the hardware properly and
+registers real elements (`v4l2h264dec`, `v4l2h265dec`, `v4l2vp8dec`,
+`v4l2vp9dec`, `v4l2mpeg2dec`, plus encoders), with caps read from the
+device — H.264 up to level 5.1, profiles through high and multiview.
+
+Decoding a 720p clip delivers genuine frames:
+
+```
+chain ******* (fakesink0:sink) (1413120 bytes, pts: 0:00:01.166666655, ...)
+```
+
+1413120 = 1280 x 720 x 1.5, i.e. NV12 720p, arriving at 33.3 ms
+intervals. About 42 frames decode correctly.
+
+Then:
+
+```
+ERROR: .../v4l2h264dec0: Could not read from resource.
+gst_v4l2_object_poll (): poll error 1: I/O error (5)
+
+qcom-venus aa00000.video-codec: no valid instance(pkt session_id:ff, pkt:21001)
+qcom-venus-decoder: dec: event session error 0
+qcom-venus aa00000.video-codec: SFR message from FW: Exception: TID = Unknown IP = 0x3bcd4 FA = 0x0 cause = 0x6
+```
+
+**The device reboots shortly afterwards.** It happened three times while
+investigating. Recovery is clean every time — Venus re-enumerates, the
+verifier passes, and `pstore` holds nothing, so this is not a kernel
+panic: the firmware dies and the system follows it down.
+
+### Why this is not an application bug
+
+`ffmpeg -c:v h264_v4l2m2m` fails at **the same firmware address**,
+`IP = 0x3bcd4 cause = 0x6`. Two independent userspace stacks, identical
+fault, so the problem is in the Venus firmware or the kernel driver's use
+of it, not in either client.
+
+The clients do differ in how well they cope: GStreamer reports the error,
+tears the pipeline down and exits 0; ffmpeg's `v4l2m2m` wrapper hits
+`Assertion pkt failed at fftools/ffmpeg_dec.c:760` and aborts. If anyone
+revisits this, use GStreamer.
+
+### If someone picks this up
+
+The firmware is the OEM blob (`postmarketos/venus.mbn`) and cannot be
+changed, so the lever is the kernel driver. Worth trying, roughly in
+order of cheapness:
+
+* the `Q08C` (QCOM compressed) capture format instead of `NV12` — the
+  hardware advertises both and we only ever exercised NV12;
+* capture-queue buffer counts, since the fault arrives a consistent
+  distance into the stream rather than at a content-specific point;
+* a `venus.mbn` from a different OxygenOS build, to see whether the fault
+  address moves;
+* `qcom-venus aa00000.video-codec: non legacy binding` at probe says this
+  is the newer binding path, so check whether upstream has sm8250 fixes
+  that postdate this kernel.
+
+**Do not test this on a device you care about.** Three reboots in one
+session, and `/tmp` is cleared each time, which also silently invalidated
+one of the test harnesses mid-run.
+
+---
+
 ## CAMERA-1 — the diagnostic and revert patches are gone
 
 **Removed:** `0060`, `0061`, `0064`, `0066`, `0068`, `0069`, `0070`,
