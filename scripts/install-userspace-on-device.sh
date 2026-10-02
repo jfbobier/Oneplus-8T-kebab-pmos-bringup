@@ -48,6 +48,11 @@ echo "== SDX55 modem: ModemManager rules"
 inst 0644 "$SRC/77-mm-ignore-sdx55-efs.rules"    /usr/lib/udev/rules.d/77-mm-ignore-sdx55-efs.rules
 inst 0644 "$SRC/77-mm-sdx55-fusion.rules"        /usr/lib/udev/rules.d/77-mm-sdx55-fusion.rules
 
+echo "== USB-C DisplayPort: picture / USB-hub mode switch"
+# For monitors that advertise only DP pin assignments C and E and so cannot
+# carry DisplayPort and USB at once. See DP-3 in docs/REGRESSIONS.md.
+inst 0755 "$SRC/kebab-dp-mode"                   /usr/bin/kebab-dp-mode
+
 echo "== SDX55 modem: MHI debug logging policy"
 # Documents why the mhi module runs with every dev_dbg site on, what it
 # costs in dmesg, and how to turn it off. See NOISE-3 in

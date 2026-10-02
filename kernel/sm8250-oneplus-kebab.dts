@@ -1407,6 +1407,34 @@
 			sound-dai = <&tfa9874_left>, <&tfa9874_right>;
 		};
 	};
+
+	/*
+	 * Audio over DisplayPort. The DP controller already registers an
+	 * hdmi-codec for this (drm_connector_hdmi_audio_init(), via the
+	 * hdmi_audio_* fields msm_dp_bridge_init() sets), and sm8250.dtsi
+	 * already gives mdss_dp "#sound-dai-cells = <0>" -- but nothing
+	 * references it, so the codec sits unbound and no PCM appears. This
+	 * link is the whole of what was missing.
+	 *
+	 * DISPLAY_PORT_RX is LPASS port 104; q6afe-dai registers the DAI and
+	 * q6routing provides the "DISPLAY_PORT_RX Audio Mixer" control that
+	 * the UCM profile switches on.
+	 */
+	displayport-dai-link {
+		link-name = "DisplayPort Playback";
+
+		cpu {
+			sound-dai = <&q6afedai DISPLAY_PORT_RX>;
+		};
+
+		platform {
+			sound-dai = <&q6routing>;
+		};
+
+		codec {
+			sound-dai = <&mdss_dp>;
+		};
+	};
 };
 
 /*
@@ -1445,6 +1473,11 @@
 
 	dai@78 {
 		reg = <TX_CODEC_DMA_TX_3>;
+	};
+
+	/* DISPLAY_PORT_RX = 104, audio over DisplayPort. */
+	dai@68 {
+		reg = <DISPLAY_PORT_RX>;
 	};
 };
 

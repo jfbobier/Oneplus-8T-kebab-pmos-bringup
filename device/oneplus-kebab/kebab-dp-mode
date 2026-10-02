@@ -1,0 +1,92 @@
+#!/bin/sh
+# Switch a USB-C DisplayPort partner between video and USB-hub operation.
+#
+#   kebab-dp-mode display   all DP lanes -> picture, monitor's USB hub off
+#   kebab-dp-mode usb       lanes back to USB -> hub on, no picture
+#   kebab-dp-mode status    report what is currently selected
+#
+# WHY THIS EXISTS
+#
+# A USB-C monitor can carry DisplayPort and USB at the same time only if it
+# advertises DP pin assignment D (2 DP lanes + USB 3.x) or F. Many monitors
+# advertise only C and E, which are both "4 lanes DP, no USB SuperSpeed" --
+# and in practice such monitors also drop their USB 2.0 hub while DP is
+# configured, so the keyboard and mouse plugged into the monitor disappear.
+#
+# Check what yours offers:
+#
+#   cat /sys/class/typec/port0-partner/port0-partner.*/vdo
+#
+# Bits 23:16 are the UFP_D pin assignments: bit2=C bit3=D bit4=E. If bit 3
+# is clear the monitor cannot do both, and no amount of host-side
+# configuration will change that -- the kebab devicetree already advertises
+# C, D and E on the phone side (see the "altmodes" node), so when D is
+# missing from the negotiated set it is always the monitor's limitation.
+#
+# This script is the fallback for that case: flip between the two modes
+# without replugging the cable.
+set -eu
+
+find_dp() {
+	for d in /sys/class/typec/port0-partner/port0-partner.*/displayport; do
+		[ -d "$d" ] && { echo "$d"; return 0; }
+	done
+	return 1
+}
+
+DP=$(find_dp) || {
+	echo "no DisplayPort alternate mode on port0-partner." >&2
+	echo "Is a DP-capable USB-C device attached, and did it finish PD discovery?" >&2
+	exit 1
+}
+
+# "USB [sink]" -> sink ; "[C] E" -> C ; no brackets -> none
+selected() { sed -n 's/.*\[\([^]]*\)\].*/\1/p' "$1" 2>/dev/null; }
+
+status() {
+	conf=$(selected "$DP/configuration")
+	pin=$(selected "$DP/pin_assignment")
+	printf 'configuration  : %s\n' "${conf:-none}"
+	printf 'pin assignment : %s   (available: %s)\n' "${pin:-none}" \
+		"$(tr -d '[]' < "$DP/pin_assignment")"
+	printf 'hpd            : %s\n' "$(cat "$DP/hpd" 2>/dev/null)"
+	for c in /sys/class/drm/card*-DP-*; do
+		[ -e "$c/status" ] && printf 'connector      : %s %s\n' \
+			"$(basename "$c")" "$(cat "$c/status")"
+	done
+	n=$(lsusb 2>/dev/null | grep -vc '1d6b:' || true)
+	printf 'usb devices    : %s downstream of the root hubs\n' "${n:-?}"
+}
+
+case "${1:-status}" in
+display)
+	# Order matters. Writing "sink" alone re-selects the configuration but
+	# does not always re-send a pin assignment, which leaves the altmode
+	# configured with no lanes and a blank screen; writing the pin
+	# assignment afterwards is what actually restores the picture.
+	echo sink > "$DP/configuration" 2>/dev/null || true
+	sleep 1
+	for p in C E D; do
+		if tr -d '[]' < "$DP/pin_assignment" | tr ' ' '\n' | grep -qx "$p"; then
+			echo "$p" > "$DP/pin_assignment"
+			break
+		fi
+	done
+	sleep 3
+	echo "-> display"
+	status
+	;;
+usb)
+	echo USB > "$DP/configuration"
+	sleep 3
+	echo "-> usb"
+	status
+	;;
+status)
+	status
+	;;
+*)
+	echo "usage: $0 {display|usb|status}" >&2
+	exit 1
+	;;
+esac

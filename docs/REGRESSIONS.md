@@ -933,6 +933,89 @@ debugging, put the device on Wi-Fi instead.
 
 ---
 
+## DP-3 — a USB-C monitor's hub and its picture can be mutually exclusive
+
+**Status:** understood and worked around. Not a kebab defect and not
+fixable in software — the limit is in the monitor.
+
+**Symptom.** With an LG USB-C monitor attached, DisplayPort works
+(2560x1440, 2 lanes HBR2) but the keyboard and mouse plugged into the
+monitor's own USB hub never appear. `lsusb` shows only the four root hubs;
+the Type-C controller's USB 2.0 root-hub port reads
+
+```
+port01: 0x0a0002a0 Speed=0 Link=RxDetect PP WCE WOE
+```
+
+— port powered, nothing connected. Not an enumeration failure: no device
+is presented at all.
+
+**Cause.** DisplayPort Alt Mode pin assignments decide how the four
+SuperSpeed lanes are split. C and E give all four to DP and leave no USB
+SuperSpeed; D gives two to DP and keeps USB 3.x. Both ends advertise what
+they support in the DP Capability VDO and the kernel uses the
+intersection (`dp_altmode_configure()` in
+`drivers/usb/typec/altmodes/displayport.c`).
+
+Reading both VDOs settles it:
+
+| | VDO | pin assignments |
+|---|---|---|
+| phone (DFP_D, bits 15:8) | `0x00001c46` | `0x1c` = **C D E** |
+| monitor (UFP_D, bits 23:16) | `0x00140045` | `0x14` = **C E** |
+
+The phone already offers D — the `altmodes` node in
+`kernel/sm8250-oneplus-kebab.dts` sets `vdo = <0x00001c46>`. The monitor
+does not, so the negotiated set is C and E and there is no configuration,
+devicetree change or quirk that can produce USB 3.x alongside DP here.
+
+There is a second part that the spec does *not* require: in pin assignment
+C the USB 2.0 pins remain connected, so the hub could still have offered
+the keyboard and mouse at high speed. This monitor drops its hub entirely
+while DP is configured. That is the monitor's firmware, confirmed by the
+test below.
+
+**Proof that nothing else is wrong.** Writing `USB` to the altmode's
+`configuration` hands the lanes back and everything appears at once:
+
+```
+Bus 003 Device 002: ID 0bda:5411 Generic USB2.1 Hub
+Bus 004 Device 002: ID 0bda:0411 Generic USB3.2 Hub
+Bus 003 Device 003: ID 30fa:1701 INSTANT USB GAMING MOUSE
+Bus 003 Device 004: ID 046a:0113 Cherry GmbH CHERRY Wired Keyboard
+Bus 003 Device 005: ID 043e:9a39 LG Electronics Inc. LG Monitor Controls
+```
+
+So the cable carries USB data, the phone's host role and USB 2.0 path are
+fine, and the hub works. Only the mode is exclusive.
+
+**Workaround:** `kebab-dp-mode`, shipped in `device-oneplus-kebab`:
+
+```bash
+sudo kebab-dp-mode display   # picture, no hub
+sudo kebab-dp-mode usb       # hub, no picture
+sudo kebab-dp-mode status
+```
+
+**One trap it encodes.** Writing `sink` back to `configuration` restores
+the configuration but does not necessarily re-send a pin assignment: the
+altmode ends up configured with *no* lanes, `hpd` goes to 0 and the screen
+stays black while the connector still reports `connected`. Writing the pin
+assignment afterwards is what actually brings the picture back, so the
+`display` path does both in that order. This was hit by hand before the
+script existed.
+
+**Before blaming a monitor,** check its VDO — bit 3 of bits 23:16:
+
+```bash
+cat /sys/class/typec/port0-partner/port0-partner.*/vdo
+```
+
+A monitor that does advertise D should give DP and USB 3.x together with
+no changes on this side.
+
+---
+
 ## USB-1 — the Type-C vSafe5V poll timeout was replaced by a regulator ramp delay
 
 **Was:** patch `0039` raised the generic Qualcomm Type-C vSafe5V poll
@@ -1036,6 +1119,132 @@ path.
 
 **Risk:** none functional. If you need them back while chasing a capture
 problem they are in `original/kernel-aport/`.
+
+---
+
+## AUDIO-DP — DisplayPort audio is wired correctly and blocked in the ADSP
+
+**Status:** devicetree and UCM work done, flashed as `#24` and verified as
+far as it goes. **Playback does not work.** The blocker is identified
+precisely and is not in anything this tree owns.
+
+### What was missing, and is now done
+
+Less than expected. The DP controller already registers an HDMI codec —
+`msm_dp_bridge_init()` sets `hdmi_audio_dev` and friends, so the DRM
+bridge-connector helper calls `drm_connector_hdmi_audio_init()` — and
+`sm8250.dtsi` already gives `displayport-controller@ae90000`
+`#sound-dai-cells = <0>`. `CONFIG_SND_SOC_HDMI_CODEC=y` was already set,
+q6afe-dai already had the `DISPLAY_PORT_RX` DAI (LPASS port 104) and
+q6routing already had its mixers. The codec sat unbound because the board
+never declared the link.
+
+Added to `kernel/sm8250-oneplus-kebab.dts`: a `displayport-dai-link`
+(cpu `<&q6afedai DISPLAY_PORT_RX>`, platform `<&q6routing>`, codec
+`<&mdss_dp>`) and `dai@68` under `&q6afedai`. Added to `ucm-HiFi.conf`: a
+`SectionDevice."HDMI"` with `JackControl "DP0 Jack"`, declared
+`ConflictingDevice` with Speaker because both drive the MultiMedia1
+frontend.
+
+All of that works. On `#24` with a monitor attached:
+
+```
+numid=181  'DISPLAY_PORT_RX Audio Mixer MultiMedia1' ... MultiMedia8
+numid=106  'DP0 Jack'      = on
+numid=110  'ELD', device=6 = populated
+ASoC DAIs  DISPLAY_PORT_RX_0 .. _7
+alsaucm    0: Speaker   1: HDMI   2: Mic
+```
+
+`aplay -l` still lists only MultiMedia1/MultiMedia2, which is correct —
+`DISPLAY_PORT_RX` is a *backend*. Playback goes to the MultiMedia1
+frontend and is routed with the mixer, exactly as the speakers are routed
+through `TERT_MI2S_RX Audio Mixer MultiMedia1`.
+
+### Where it fails
+
+```
+qcom-q6afe: AFE enable for port 0x6020 failed -110
+q6afe-dai: fail to start AFE port 68
+q6afe-dai: ASoC error (-110): at snd_soc_dai_prepare() on DISPLAY_PORT_RX_0
+```
+
+Port `0x6020` is `AFE_PORT_ID_HDMI_OVER_DP_RX`. The ADSP does not answer
+`AFE_PORT_CMD_DEVICE_START` within q6afe's `TIMEOUT_MS` of 3000.
+
+A second attempt in the same boot answers differently:
+
+```
+cmd = 0x100e5 returned error = 0x9      (ADSP_EALREADY)
+AFE enable for port 0x6020 failed -22
+```
+
+So the DSP *did* eventually process the first start and considers the
+port running — it just took longer than three seconds. And because the
+first start "failed", `q6afe_dai_prepare()` never set
+`is_port_started[]`, so it never stops the port before retrying and every
+later attempt gets EALREADY until a reboot.
+
+### Why the DSP stalls — the actual root cause
+
+An ftrace of the attempt gives the order directly:
+
+```
+q6afe_hdmi_port_prepare  <-q6afe_dai_prepare
+q6afe_port_start         <-q6afe_dai_prepare
+msm_dp_audio_shutdown    <-drm_bridge_connector_audio_shutdown
+```
+
+**`msm_dp_audio_prepare()` is never called.** The DP controller's audio
+path is never enabled, so the ADSP is asked to start a port whose clock
+is not running, and waits.
+
+The reason it is never called is an ordering dependency:
+
+* `drm_connector_hdmi_audio_ops` provides `.prepare` but **no
+  `.hw_params`**, so `hdmi_codec_hw_params()` returns early and *all* DP
+  audio enablement happens in the codec DAI's `.prepare`.
+* `snd_soc_pcm_dai_prepare()` walks CPU DAIs before codec DAIs and
+  aborts on the first error.
+* q6afe is the CPU DAI. It runs first, needs the DP audio clock, times
+  out, and the loop aborts — so the codec's `.prepare`, and with it
+  `msm_dp_audio_prepare()`, never runs.
+
+Chicken and egg, and structural rather than a configuration mistake.
+
+**Corroborating evidence:** no sm8250 board in this kernel wires DP audio
+at all. The boards that do (`x1e80100`, `sm8650`, `qcm6490`) use the newer
+`q6apm` path; `sc7180-acer-aspire1` is the only legacy-`q6afedai` example
+and is a different SoC. This looks like a combination nobody has made work
+on this ADSP.
+
+### What to try next, in order of promise
+
+1. **Give the DRM helper a `.hw_params`.** If
+   `drm_connector_hdmi_audio_prepare()` ran at hw_params time — which is
+   before any DAI's prepare — the DP audio clock would be up when q6afe
+   starts the port. The signature already matches what
+   `hdmi_codec_hw_params()` passes. This is the cleanest hypothesis and
+   the smallest patch, but it is a generic DRM/ASoC change and it is a
+   theory: the ADSP may still refuse.
+2. **Make the timeout failure recoverable.** Independent of the above,
+   `q6afe_dai_prepare()` should mark the port as needing a stop when
+   `q6afe_port_start()` times out, so a retry is not permanently poisoned
+   by EALREADY until reboot. That is a real defect on its own.
+
+Both are kernel changes to built-in code (`CONFIG_DRM_DISPLAY_HELPER=y`,
+`CONFIG_SND_SOC_HDMI_CODEC=y`), so each test costs a full build and a
+fastboot flash — which means unplugging the monitor each cycle.
+
+### If you give up on it
+
+Revert cost is small and the leftovers are harmless: the dai-link and the
+UCM HDMI device cost nothing when no monitor is attached, and the Speaker
+device is unaffected (verified after all of the above — `speaker-test`
+still reports Front Left / Front Right in stereo). To remove entirely,
+drop `displayport-dai-link` and `dai@68` from the devicetree and the
+`SectionDevice."HDMI"` plus Speaker's `ConflictingDevice` from
+`ucm-HiFi.conf`.
 
 ---
 

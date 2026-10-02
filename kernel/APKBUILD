@@ -5,7 +5,7 @@ maintainer="Jianhua Lu <lujianhua000@gmail.com>"
 _flavor="postmarketos-qcom-sm8250"
 pkgname=linux-$_flavor
 pkgver=7.2.0
-pkgrel=22
+pkgrel=23
 pkgdesc="Mainline kernel fork for SM8250"
 arch="aarch64"
 _carch="arm64"
@@ -120,7 +120,7 @@ package() {
 sha512sums="
 26d48ebd04c43e993bd00f9c055d40daf87b4919332c974e3c0db236135b522415e3dcf4b512e4028cc42da63fe4639991c3870bcb977967846db590a0b950b7  linux-postmarketos-qcom-sm8250-sm8250-7.2.0.tar.gz
 2f6e4d6dcf7eb27d481e91dcf96cd29d128260ff52e701875b043f5be63c7b66844ebc096e60c841d7ffcf87fdb7958fb3f31bc2950734d210c9cda79517262b  config-postmarketos-qcom-sm8250.aarch64
-896dfda82c6c03f4d91f9704374e2b07d05987f8afe87af2c55fa6e2c3e9ca28b5d7083cbe04629ea5e45d2f2b557f4621656eb0f4724da28e893726636ddef6  sm8250-oneplus-kebab.dts
+b6d5aedca4d8f9150fa2596f799b0d18055a49fb1030793e179b1e53d0614ffead585f0a19683086ac7bcfc34a234cca1f5172edcd9325dc4510a7fb4d602f70  sm8250-oneplus-kebab.dts
 630baca53b90c82f5847376716cc20d61042b14448db6fecac200f1d40251a75714d629cb46797674907a0381ed6906aa5da3da68e1603cb165294bf3fb5941c  0001-drm-panel-add-Samsung-AMB655X-panel-driver.patch
 a70a332a48042b51afd29d833c863404ce9a6018ffe12f16119a446e7c1da2b652325ea81451c548d2b9a7f87ebd5708f2a942f96a2c1b48386d2483e152bd2a  0002-input-touchscreen-add-Synaptics-TCM-oncell-driver.patch
 97e70eaf453322bf9252069a6f9071d4e7ba5d59d8374e2eafc55e05149466bd63b412e90da5d77b52d3bce86218f4701573223c81c90ca4f0f0e224af830f8a  0003-regulator-add-MP2762A-OTG-VBUS-regulator.patch
