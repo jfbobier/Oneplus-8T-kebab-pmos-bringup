@@ -186,16 +186,28 @@ PHONE=192.168.1.20 scripts/kebab-build.sh
 Not in any package; reinstall after any rootfs reflash.
 
 ```
+/lib/firmware/postmarketos/{adsp,cdsp,slpi,venus}.mbn
+                                                named by firmware-name in the
+                                                devicetree; adsp.mbn is the
+                                                audio DSP, so without it there
+                                                is no audio at all
 /lib/firmware/qcom/a650_{sqe.fw,gmu.bin}        Adreno; needs SQE >= 0x95,
                                                 the vendor blob is 0x93
 /lib/firmware/qcom/a650_zap.{mdt,b00,b01,b02,elf}   OEM-signed, from vendor.img
 /lib/firmware/ath11k/QCA6390/hw2.0/{amss.bin,m3.bin,board-2.bin}
 /lib/firmware/qca/{htbtfw20.tlv,htnv20.bin}
-/lib/firmware/qcom/sdx55m/*                     from the device's modem.img
+/lib/firmware/sdx55m/*                          from the device's modem.img;
+                                                no qcom/ prefix — the Sahara
+                                                loader names them sdx55m/*.mbn
 ```
 
+None of these are owned by an apk package: `apk info --who-owns` reports
+no owner for any of them, which is why they have to be reinstalled after
+a rootfs reflash.
+
 The SDX55 blobs are OEM-signed and device-specific. They are not
-redistributable and are not in this repository.
+redistributable and are not in this repository — nor is any other
+firmware; this tree references all of it **by filename only**.
 
 ## Moving to a newer SM8250 kernel
 
