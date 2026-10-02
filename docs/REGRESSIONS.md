@@ -1122,72 +1122,47 @@ problem they are in `original/kernel-aport/`.
 
 ---
 
-## AUDIO-DP — DisplayPort audio is wired correctly and blocked in the ADSP
+## AUDIO-DP — resolved: audio over DisplayPort works
 
-**Status:** devicetree and UCM work done, flashed as `#24` and verified as
-far as it goes. **Playback does not work.** The blocker is identified
-precisely and is not in anything this tree owns.
+**Status:** working on hardware, verified 2026-10-02 on `#26` against two
+different sinks — a monitor on the native USB-C port, and a monitor
+behind a Lenovo ThinkPad Thunderbolt 3 dock.
 
-### What was missing, and is now done
+### What was missing
 
-Less than expected. The DP controller already registers an HDMI codec —
-`msm_dp_bridge_init()` sets `hdmi_audio_dev` and friends, so the DRM
-bridge-connector helper calls `drm_connector_hdmi_audio_init()` — and
-`sm8250.dtsi` already gives `displayport-controller@ae90000`
-`#sound-dai-cells = <0>`. `CONFIG_SND_SOC_HDMI_CODEC=y` was already set,
-q6afe-dai already had the `DISPLAY_PORT_RX` DAI (LPASS port 104) and
-q6routing already had its mixers. The codec sat unbound because the board
-never declared the link.
+Less than expected. The DP controller already registered an HDMI codec
+(`msm_dp_bridge_init()` sets the `hdmi_audio_*` fields, so the bridge
+connector calls `drm_connector_hdmi_audio_init()`), `sm8250.dtsi` already
+gave `displayport-controller@ae90000` `#sound-dai-cells = <0>`,
+`CONFIG_SND_SOC_HDMI_CODEC=y` was set, q6afe-dai already had the
+`DISPLAY_PORT_RX` DAI (LPASS port 104) and q6routing already had its
+mixers. The codec sat unbound because the board never declared the link.
 
-Added to `kernel/sm8250-oneplus-kebab.dts`: a `displayport-dai-link`
-(cpu `<&q6afedai DISPLAY_PORT_RX>`, platform `<&q6routing>`, codec
-`<&mdss_dp>`) and `dai@68` under `&q6afedai`. Added to `ucm-HiFi.conf`: a
-`SectionDevice."HDMI"` with `JackControl "DP0 Jack"`, declared
-`ConflictingDevice` with Speaker because both drive the MultiMedia1
-frontend.
+Two things were needed:
 
-All of that works. On `#24` with a monitor attached:
+1. **Devicetree** — a `displayport-dai-link` (cpu
+   `<&q6afedai DISPLAY_PORT_RX>`, platform `<&q6routing>`, codec
+   `<&mdss_dp>`) and `dai@68` under `&q6afedai`. This made the backend
+   exist: the `DISPLAY_PORT_RX_0..7` DAIs, the q6routing mixers, `DP0
+   Jack` and the ELD control all appeared.
+2. **Patch 0019** — without which it still did not play.
 
-```
-numid=181  'DISPLAY_PORT_RX Audio Mixer MultiMedia1' ... MultiMedia8
-numid=106  'DP0 Jack'      = on
-numid=110  'ELD', device=6 = populated
-ASoC DAIs  DISPLAY_PORT_RX_0 .. _7
-alsaucm    0: Speaker   1: HDMI   2: Mic
-```
+### Why the devicetree alone was not enough
 
-`aplay -l` still lists only MultiMedia1/MultiMedia2, which is correct —
-`DISPLAY_PORT_RX` is a *backend*. Playback goes to the MultiMedia1
-frontend and is routed with the mixer, exactly as the speakers are routed
-through `TERT_MI2S_RX Audio Mixer MultiMedia1`.
-
-### Where it fails
+With the link declared, playback failed:
 
 ```
 qcom-q6afe: AFE enable for port 0x6020 failed -110
-q6afe-dai: fail to start AFE port 68
 q6afe-dai: ASoC error (-110): at snd_soc_dai_prepare() on DISPLAY_PORT_RX_0
 ```
 
-Port `0x6020` is `AFE_PORT_ID_HDMI_OVER_DP_RX`. The ADSP does not answer
-`AFE_PORT_CMD_DEVICE_START` within q6afe's `TIMEOUT_MS` of 3000.
+and a retry in the same boot answered `DSP returned error[9]`
+(`ADSP_EALREADY`) — so the DSP had eventually started the port, just past
+q6afe's 3-second timeout, and because the first start "failed",
+`q6afe_dai_prepare()` never recorded it as started and never stopped it
+before retrying.
 
-A second attempt in the same boot answers differently:
-
-```
-cmd = 0x100e5 returned error = 0x9      (ADSP_EALREADY)
-AFE enable for port 0x6020 failed -22
-```
-
-So the DSP *did* eventually process the first start and considers the
-port running — it just took longer than three seconds. And because the
-first start "failed", `q6afe_dai_prepare()` never set
-`is_port_started[]`, so it never stops the port before retrying and every
-later attempt gets EALREADY until a reboot.
-
-### Why the DSP stalls — the actual root cause
-
-An ftrace of the attempt gives the order directly:
+ftrace gave the cause directly:
 
 ```
 q6afe_hdmi_port_prepare  <-q6afe_dai_prepare
@@ -1195,56 +1170,62 @@ q6afe_port_start         <-q6afe_dai_prepare
 msm_dp_audio_shutdown    <-drm_bridge_connector_audio_shutdown
 ```
 
-**`msm_dp_audio_prepare()` is never called.** The DP controller's audio
-path is never enabled, so the ADSP is asked to start a port whose clock
-is not running, and waits.
+`msm_dp_audio_prepare()` was **never called**. All DP audio enablement
+lives in the codec DAI's `.prepare`, because
+`drm_connector_hdmi_audio_ops` supplies no `.hw_params`;
+`snd_soc_pcm_dai_prepare()` walks CPU DAIs before codec DAIs and stops at
+the first error; q6afe is the CPU DAI. It timed out waiting for a clock
+that only the callback it was blocking could enable.
 
-The reason it is never called is an ordering dependency:
+Patch 0019 adds a `.hw_params` to the helper that runs the same
+configuration, gated behind a new `drm_bridge.hdmi_audio_prepare_early`
+flag that only msm/dp sets. hw_params runs for every DAI in the link
+before any of them is prepared, so the clock is up by the time the CPU
+DAI starts its port. The other seven users of the helper (vc4, adv7511,
+lt9611, lt9611uxc, it66121, dw-hdmi-qp, msm/hdmi) are unchanged.
 
-* `drm_connector_hdmi_audio_ops` provides `.prepare` but **no
-  `.hw_params`**, so `hdmi_codec_hw_params()` returns early and *all* DP
-  audio enablement happens in the codec DAI's `.prepare`.
-* `snd_soc_pcm_dai_prepare()` walks CPU DAIs before codec DAIs and
-  aborts on the first error.
-* q6afe is the CPU DAI. It runs first, needs the DP audio clock, times
-  out, and the loop aborts — so the codec's `.prepare`, and with it
-  `msm_dp_audio_prepare()`, never runs.
+### Verified
 
-Chicken and egg, and structural rather than a configuration mistake.
+* Audio plays to a monitor over DisplayPort, on both sinks tested.
+* The three AFE errors above are **gone** from the boot log.
+* The UCM `HDMI` device appears in PipeWire with `JackControl "DP0
+  Jack"` working: with no monitor attached the port reports
+  `availability group: DP0, not available`, and with one attached it
+  becomes selectable.
+* Speaker playback is unaffected — still stereo, still the default
+  (priority 200 against HDMI's 150), active profile `HiFi (Mic,
+  Speaker)`.
 
-**Corroborating evidence:** no sm8250 board in this kernel wires DP audio
-at all. The boards that do (`x1e80100`, `sm8650`, `qcm6490`) use the newer
-`q6apm` path; `sc7180-acer-aspire1` is the only legacy-`q6afedai` example
-and is a different SoC. This looks like a combination nobody has made work
-on this ADSP.
+### Two things to know in practice
 
-### What to try next, in order of promise
+**A dock may win over the monitor.** The Lenovo dock exposes its own USB
+audio bridge (`17ef:30cf`, "ThinkPad Thunderbolt 3 Dock USB Audio"),
+which PipeWire sees as a separate card. With the dock attached you have
+to pick the DisplayPort output explicitly; it will not be chosen for you,
+because the dock's USB audio device is a perfectly good sink as far as
+PipeWire is concerned.
 
-1. **Give the DRM helper a `.hw_params`.** If
-   `drm_connector_hdmi_audio_prepare()` ran at hw_params time — which is
-   before any DAI's prepare — the DP audio clock would be up when q6afe
-   starts the port. The signature already matches what
-   `hdmi_codec_hw_params()` passes. This is the cleanest hypothesis and
-   the smallest patch, but it is a generic DRM/ASoC change and it is a
-   theory: the ADSP may still refuse.
-2. **Make the timeout failure recoverable.** Independent of the above,
-   `q6afe_dai_prepare()` should mark the port as needing a stop when
-   `q6afe_port_start()` times out, so a retry is not permanently poisoned
-   by EALREADY until reboot. That is a real defect on its own.
+**That dock's audio bridge logs three harmless complaints** when
+`snd-usb-audio` probes it:
 
-Both are kernel changes to built-in code (`CONFIG_DRM_DISPLAY_HELPER=y`,
-`CONFIG_SND_SOC_HDMI_CODEC=y`), so each test costs a full build and a
-fastboot flash — which means unplugging the monitor each cycle.
+```
+usb 3-1.1.1.2: parse_audio_format_rates_v2v3(): unable to retrieve number of sample rates (clock 39)
+usb 3-1.1.1.2: 2:2: cannot get freq (v2/v3): err -32
+usb 3-1.1.1.2: 37:0: failed to get current value for ch 0 (-32)
+```
 
-### If you give up on it
+`-32` is EPIPE — the device stalls those UAC control reads. Its audio
+works anyway. Nothing to do with this tree; listed here so it is not
+mistaken for one of ours.
 
-Revert cost is small and the leftovers are harmless: the dai-link and the
-UCM HDMI device cost nothing when no monitor is attached, and the Speaker
-device is unaffected (verified after all of the above — `speaker-test`
-still reports Front Left / Front Right in stereo). To remove entirely,
-drop `displayport-dai-link` and `dai@68` from the devicetree and the
-`SectionDevice."HDMI"` plus Speaker's `ConflictingDevice` from
-`ucm-HiFi.conf`.
+### Speaker and HDMI are mutually exclusive
+
+Both drive the MultiMedia1 frontend, so `ucm-HiFi.conf` declares them
+`ConflictingDevice` of each other. That is deliberate — it is the same
+trap that made PipeWire respawn a failing node in a loop with the old
+Earpiece device. If you want phone speakers and monitor audio usable at
+the same time, that needs a `MULTIMEDIA3` frontend in the devicetree and
+another flash; worth doing only if you would actually use it.
 
 ---
 
@@ -1492,6 +1473,8 @@ them changes behaviour; all three are kebab-independent and upstreamable.
 | 0016 | `qcom,pmic-typec ...: isr: tx_sig` | The PHY finished putting a hard or cable reset on the wire — a sequence TCPM asked for and whose completion it tracks itself. The handler does nothing else. A partner needing several resets filled the log with error lines saying the hardware obeyed. |
 | 0017 | `wcd938x_codec audio-codec: Impedance detect ramp error, c1=0, x1=0x0` | The ZDET ramp returns nothing when there is no load across HPHL/HPHR — the normal state unplugged, and the permanent state on this board, which has no 3.5 mm jack at all. |
 | 0018 | `qcom_q6v5_pas ...: Handover signaled, but it already happened` | See MODEM-3. |
+| 0020 | `[drm:msm_dp_ctrl_*] *ERROR* max v_level reached` / `link training #N ... failed` / `link training on sink failed` | DP link fallback *expects* each attempt before the working one to fail. `msm_dp_ctrl_on_link()` retries up to five times stepping the rate and lane count down, and breaks on success; the only place that knows the search is over is `msm_dp_display_process_hpd_high()`, which still reports a genuine failure once as `Failed link training (rc=%d)`. |
+| 0020 | `[drm:msm_dp_aux_isr] *ERROR* Unexpected DP AUX IRQ ... when not busy` | The handler returns `IRQ_NONE`, which is the whole of the correct response for an interrupt that is not ours. The AUX block shares its interrupt and sinks raise AUX status asynchronously around hotplug. |
 
 **Verified on hardware, kernel `#23`:** all three are at zero
 occurrences, and the `tfa2 ... hw_params` line (also demoted) is at zero
@@ -1502,6 +1485,14 @@ and introduced none.
 **Headline effect of r22 on the boot log:** 3762 lines → **1251 lines**,
 a 67% reduction, with distinct problem-shaped messages down from 36 to
 25.
+
+**Patch 0020, measured on hardware (`#25` → `#26`, both with a monitor
+attached):** the five message shapes it targets went from **11 lines to
+0** on a successful DisplayPort attach. A normalised diff of every
+error-shaped line found nothing else removed and nothing new, except
+three lines from a Lenovo dock's USB audio bridge that was not present in
+the earlier capture (see AUDIO-DP). Two AFE errors also disappeared, but
+that is patch 0019 making DP audio work rather than anything 0020 did.
 
 **One honest correction on the Sahara change** (MODEM-2): aggregating the
 per-image lines into a per-session summary barely helped — 23 Sahara

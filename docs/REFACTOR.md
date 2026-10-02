@@ -15,7 +15,7 @@ for traceability). This tree is:
 |---|---:|---|
 | Kernel `.config` | 1 file | drivers and features that exist, enabled |
 | Board devicetree | 1 file | everything that is board wiring |
-| Kernel patches | 18 | changes that are genuinely missing C code or generic bugs |
+| Kernel patches | 20 | changes that are genuinely missing C code or generic bugs |
 | Optional patches | 3 | dropped workarounds, kept one `cp` away |
 | Userspace | 3 packages | policy, service startup, per-device identity |
 
@@ -49,7 +49,7 @@ file was compared against the DTB from the original 81-patch stack with
 phandle renumbering resolved (`scripts/verify-dtb.sh`). Five differences,
 all intentional, all in [REGRESSIONS.md](REGRESSIONS.md).
 
-## The 18 kernel patches
+## The 20 kernel patches
 
 | # | Patch | Why it cannot be configuration |
 |---|---|---|
@@ -71,10 +71,12 @@ all intentional, all in [REGRESSIONS.md](REGRESSIONS.md).
 | 0016 | `usb/typec/qcom`: no-op `tx_sig` IRQ logged as an error | generic log-level bug |
 | 0017 | `ASoC/wcd938x`: unplugged impedance ramp logged as an error | generic log-level bug |
 | 0018 | `remoteproc/qcom_q6v5`: repeated handover logged as an error | generic log-level bug |
+| 0019 | `drm/display`: configure sink audio from hw_params | generic ordering bug |
+| 0020 | `drm/msm/dp`: expected link-training fallback logged as errors | generic log-level bug |
 
-Patches 0004, 0005, 0007, 0012, 0014, 0015, 0016, 0017 and 0018 are
-generic fixes with no kebab specifics in them, and are the nine most
-directly upstreamable. 0016-0018 are pure `dev_err` -> `dev_dbg`
+Patches 0004, 0005, 0007, 0012, 0014, 0015, 0016, 0017, 0018, 0019 and
+0020 are generic fixes with no kebab specifics in them, and are the
+eleven most directly upstreamable. 0016-0018 are pure `dev_err` -> `dev_dbg`
 demotions on paths that are reached during normal, healthy operation;
 each carries a comment saying why the handler is empty or why the
 condition is expected, because that is the part a reviewer needs.
@@ -93,7 +95,12 @@ instrumenting this refactor on hardware:
   because `msm_dp_debug_init()` stores a connector pointer that is NULL at
   that point and never checks it.
 
-**0016-0018 were added after the hardware bring-up was already
+**0019 is the one that made audio over DisplayPort work at all**, and it
+is not kebab-specific: any board whose CPU-side DAI needs the sink's
+audio clock running before it can start hits the same ordering problem.
+See AUDIO-DP in the journal.
+
+**0016-0018 and 0020 were added after the hardware bring-up was already
 working**, to make a healthy boot log readable. Between them they removed
 several hundred error-level lines per session that all reported hardware
 doing exactly what it had been told to do. 0018 is the promotion of what

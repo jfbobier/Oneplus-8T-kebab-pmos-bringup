@@ -5,7 +5,7 @@ maintainer="Jianhua Lu <lujianhua000@gmail.com>"
 _flavor="postmarketos-qcom-sm8250"
 pkgname=linux-$_flavor
 pkgver=7.2.0
-pkgrel=23
+pkgrel=25
 pkgdesc="Mainline kernel fork for SM8250"
 arch="aarch64"
 _carch="arm64"
@@ -67,6 +67,8 @@ source="
 	0016-usb-typec-qcom-stop-logging-the-no-op-signal-transmi.patch
 	0017-ASoC-codecs-wcd938x-don-t-log-an-impedance-ramp-with.patch
 	0018-remoteproc-qcom_q6v5-don-t-log-a-repeated-handover-s.patch
+	0019-drm-display-let-a-bridge-configure-sink-audio-from-h.patch
+	0020-drm-msm-dp-don-t-log-an-expected-link-training-fallb.patch
 "
 builddir="$srcdir/linux-$_tag"
 
@@ -139,4 +141,6 @@ b14e9dbfe3f54a786ab0ba0f2ee0fe7fd66ba77a22648de05c7b0f0538dacf2b5a95c4237b08b9c1
 f25a3dab2c761578c0fcb66ab76e293719e61bff2c8714ea43a8aa766ce60e827075a93a1d2d0d5a866d71469893881239c93859953a866a70975ed1fe678b04  0016-usb-typec-qcom-stop-logging-the-no-op-signal-transmi.patch
 3a7e40945f70dfea2106990625db159b1e530196e5a4ffe456f69fd51b0a3916c7cf690cb25ad98d6b7ff5d37adf890ddaf4580c7d8321edf91a4f8f4c747ef9  0017-ASoC-codecs-wcd938x-don-t-log-an-impedance-ramp-with.patch
 8d6ca750ff42086399e78f7a54d7d8df2d136e2b6b0d3872d94beff9d60dc44fc844b6cb2b00946316d2a73fc53b8048c3a12378a40bd45b0232133f35b1efd5  0018-remoteproc-qcom_q6v5-don-t-log-a-repeated-handover-s.patch
+122b7ae91b1149bcf6d4b5c675636805def070ee5471fe3487d3205bdd6495c4265e9f49f32f3fcd46d3fa9254cddc6092d116e59fe5723efdedd587c8e53955  0019-drm-display-let-a-bridge-configure-sink-audio-from-h.patch
+b3ffdac70bb0b303d4eeac9366ef6db65af42056a08ca30b98f3a7b60eecf8d8ab2efff2fe05d30925ca98d015bead7df7def07b037e026903d24a9169a757b8  0020-drm-msm-dp-don-t-log-an-expected-link-training-fallb.patch
 "
