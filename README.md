@@ -181,33 +181,60 @@ scripts/kebab-build.sh --modules-only   # resync modules only
 PHONE=192.168.1.20 scripts/kebab-build.sh
 ```
 
-## Firmware installed by hand
+## Firmware
 
-Not in any package; reinstall after any rootfs reflash.
+### Most of it is just three packages
+
+Seven of the files this device needs are redistributable and already in
+Alpine/postmarketOS. Verified byte-identical to the working set on the
+device (sha256, 2026-10-02), so there is nothing to extract for these:
+
+```bash
+sudo apk add linux-firmware-ath11k linux-firmware-qcom linux-firmware-qca
+```
+
+| from | files |
+|---|---|
+| `linux-firmware-ath11k` | `ath11k/QCA6390/hw2.0/{amss.bin,m3.bin,board-2.bin}` |
+| `linux-firmware-qcom` | `qcom/{a650_sqe.fw,a650_gmu.bin}` |
+| `linux-firmware-qca` | `qca/{htbtfw20.tlv,htnv20.bin}` |
+
+These are redistributable because Qualcomm granted it explicitly — the
+ath11k directory ships a `Notice.txt` saying so, which is why
+linux-firmware can carry them at all.
+
+Note the packaged `a650_sqe.fw` is **newer than the vendor's**: this
+device needs SQE >= 0x95 and the OxygenOS blob is 0x93, so the upstream
+one is the one you want regardless.
+
+### What you really do have to extract
+
+Only these, and only because they are OEM-signed and device-specific —
+no distribution has the right to ship them:
 
 ```
 /lib/firmware/postmarketos/{adsp,cdsp,slpi,venus}.mbn
-                                                named by firmware-name in the
-                                                devicetree; adsp.mbn is the
-                                                audio DSP, so without it there
-                                                is no audio at all
-/lib/firmware/qcom/a650_{sqe.fw,gmu.bin}        Adreno; needs SQE >= 0x95,
-                                                the vendor blob is 0x93
-/lib/firmware/qcom/a650_zap.{mdt,b00,b01,b02,elf}   OEM-signed, from vendor.img
-/lib/firmware/ath11k/QCA6390/hw2.0/{amss.bin,m3.bin,board-2.bin}
-/lib/firmware/qca/{htbtfw20.tlv,htnv20.bin}
-/lib/firmware/sdx55m/*                          from the device's modem.img;
-                                                no qcom/ prefix — the Sahara
-                                                loader names them sdx55m/*.mbn
+                                        named by firmware-name in the
+                                        devicetree; adsp.mbn is the audio
+                                        DSP, so without it there is no
+                                        audio at all
+/lib/firmware/qcom/a650_zap.{mdt,b00,b01,b02,elf}
+                                        OEM-signed GPU zap shader, from
+                                        vendor.img
+/lib/firmware/sdx55m/*                  from the device's modem.img; no
+                                        qcom/ prefix — the Sahara loader
+                                        in patch 0010 names them
+                                        sdx55m/*.mbn
 ```
 
-None of these are owned by an apk package: `apk info --who-owns` reports
-no owner for any of them, which is why they have to be reinstalled after
-a rootfs reflash.
+Pull them from your own device's `vendor.img` and `modem.img`. They are
+not in this repository and will not be: this tree references all firmware
+**by filename only**, and never contains a blob.
 
-The SDX55 blobs are OEM-signed and device-specific. They are not
-redistributable and are not in this repository — nor is any other
-firmware; this tree references all of it **by filename only**.
+Nothing above is owned by an apk package once installed by hand
+(`apk info --who-owns` reports no owner), which is why the extracted set
+has to be reinstalled after a rootfs reflash. The three packages, by
+contrast, survive as normal packages.
 
 ## Moving to a newer SM8250 kernel
 
