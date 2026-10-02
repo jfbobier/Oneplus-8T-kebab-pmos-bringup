@@ -2,6 +2,49 @@
 
 Prepared for review. Nothing here has been pushed or proposed to anyone.
 
+## STOP — read this first
+
+**postmarketOS (now renamed [Nura](https://nura.eco)) forbids AI-assisted
+contributions.** From
+<https://docs.nura.eco/policies-and-processes/development/ai-policy.html>:
+
+> **We forbid the use of generative AI tools in Nura.**
+>
+> The following is not allowed in Nura:
+>
+> * Submitting contributions fully or in part created by generative AI
+>   tools to Nura.
+> * Recommending generative AI tools to other community members for
+>   solving problems in the Nura space.
+
+Repeated violation escalates under the Code of Conduct enforcement
+guidelines, up to permanent bans. There is no disclosure exemption — it
+is a prohibition, not a transparency requirement.
+
+This tree was refactored with substantial AI assistance, which its own
+git history records openly. **Destinations 1, 2 and 3 below are therefore
+not actionable as prepared.** That covers all of
+`gitlab.postmarketos.org`: pmaports *and* the `soc/qualcomm-sm8250/linux`
+kernel fork.
+
+What remains possible:
+
+* **Keep the work here.** This repository is public and complete; anyone
+  running a kebab can use it directly. That costs nothing and breaks no
+  rules.
+* **Redo it yourself, if you want it in Nura.** Not "reword it" — the
+  policy's own reasoning is about authors who do not fully understand
+  their contribution, cannot describe it accurately, and have not tested
+  it. Satisfying that means the work has to genuinely be yours. That is a
+  real option, and the findings in `REGRESSIONS.md` are a map of what to
+  re-derive, but it is work, not paperwork.
+* **Destination 4, mainline Linux, is a different project** with its own
+  rules. Check them before assuming — do not carry the assumption across
+  from here.
+
+The technical findings below stand on their own merits regardless of who
+can submit them, which is why the rest of this document is left intact.
+
 ## The short version
 
 **Most of this does not go to pmaports.** The sm8250 kernel aport in
@@ -21,13 +64,13 @@ So there are four destinations, not one:
 
 | # | Destination | What | Status |
 |---|---|---|---|
-| 1 | **pmaports** `device-oneplus-kebab` | the userspace — UCM, udev rules, systemd units, Bluetooth address | **prepared, CI green** |
-| 2 | **kernel fork** `7.2.0-dev` | the 6 new drivers, the board devicetree | ready to assemble; all 18 patches apply cleanly |
-| 3 | **pmaports** `linux-postmarketos-qcom-sm8250` | config changes, `_tag` bump | partly blocked on #2 |
+| 1 | **pmaports** `device-oneplus-kebab` | the userspace — UCM, udev rules, systemd units, Bluetooth address | prepared, CI green — **blocked by the AI policy** |
+| 2 | **kernel fork** `7.2.0-dev` | the 6 new drivers, the board devicetree | all 18 patches apply cleanly — **blocked by the AI policy** |
+| 3 | **pmaports** `linux-postmarketos-qcom-sm8250` | config changes, `_tag` bump | prepared, CI green — **blocked by the AI policy** |
 | 4 | **mainline Linux** | the 9 generic fixes | independent, highest value |
 
-Do them in that order. #1 is independent and is the natural first
-contribution.
+That order was the plan before the policy was found. See the stop
+notice above.
 
 ---
 
