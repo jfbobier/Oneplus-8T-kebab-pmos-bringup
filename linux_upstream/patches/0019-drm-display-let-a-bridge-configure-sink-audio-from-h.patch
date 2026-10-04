@@ -1,0 +1,170 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: kebab refactor <kebab@local.invalid>
+Date: Fri, 2 Oct 2026 12:03:09 +0200
+Subject: [PATCH] drm/display: let a bridge configure sink audio from hw_params
+
+drm_connector_hdmi_audio_ops implements .prepare and not .hw_params, so
+every bridge using the HDMI audio helper configures its sink's audio path
+from the codec DAI's prepare callback.
+
+That is too late when the CPU side of the DAI link cannot start until the
+sink's audio clock is already running. ASoC's snd_soc_pcm_dai_prepare()
+walks CPU DAIs before codec DAIs and returns on the first error, so such
+a CPU DAI fails and aborts the loop before the bridge's prepare is
+reached -- the clock it was waiting for is enabled by a callback that the
+failure prevents from running.
+
+Qualcomm's LPASS is one such CPU side. On an sm8250 board with the
+DisplayPort controller bound to the DISPLAY_PORT_RX AFE port, starting
+playback gives:
+
+  qcom-q6afe: AFE enable for port 0x6020 failed -110
+  q6afe-dai: ASoC error (-110): at snd_soc_dai_prepare() on DISPLAY_PORT_RX_0
+
+and an ftrace of the attempt shows msm_dp_audio_prepare() is never
+called at all -- only msm_dp_audio_shutdown(), from the teardown path.
+
+Add a .hw_params to the helper that runs the same configuration, and a
+drm_bridge flag to select it. hw_params runs for every DAI in the link
+before any of them is prepared, so the clock is up by the time the CPU
+DAI starts its port. Both callbacks receive identical parameters, so the
+configuration itself is unchanged.
+
+The flag defaults to off: a bridge that does not set it keeps being
+configured from prepare exactly as before, and the new hw_params returns
+without touching it. Note that providing .hw_params at all means
+hdmi_codec_hw_params() no longer returns early for these connectors, so
+it now runs hdmi_codec_fill_codec_params() and the IEC958 channel status
+fill before the (inert) callback. Both are computed into an on-stack
+hdmi_codec_params that is then discarded, and the one shared value it
+writes, daifmt->bit_fmt, is set by hdmi_codec_prepare() to the same value
+immediately afterwards.
+---
+ .../gpu/drm/display/drm_bridge_connector.c    |  3 +++
+ .../gpu/drm/display/drm_hdmi_audio_helper.c   | 23 +++++++++++++++++++
+ drivers/gpu/drm/msm/dp/dp_drm.c               |  8 +++++++
+ include/drm/drm_bridge.h                      | 17 ++++++++++++++
+ include/drm/drm_connector.h                   |  8 +++++++
+ 5 files changed, 59 insertions(+)
+
+diff --git a/drivers/gpu/drm/display/drm_bridge_connector.c b/drivers/gpu/drm/display/drm_bridge_connector.c
+index 649969fca..2dfe26814 100644
+--- a/drivers/gpu/drm/display/drm_bridge_connector.c
++++ b/drivers/gpu/drm/display/drm_bridge_connector.c
+@@ -1017,6 +1017,9 @@ struct drm_connector *drm_bridge_connector_init(struct drm_device *drm,
+ 						    bridge->hdmi_audio_dai_port);
+ 		if (ret)
+ 			return ERR_PTR(ret);
++
++		connector->hdmi_audio.prepare_early =
++			bridge->hdmi_audio_prepare_early;
+ 	}
+ 
+ 	if (bridge_connector->bridge_hdmi_cec &&
+diff --git a/drivers/gpu/drm/display/drm_hdmi_audio_helper.c b/drivers/gpu/drm/display/drm_hdmi_audio_helper.c
+index 7d78b02c1..3ed5d73f1 100644
+--- a/drivers/gpu/drm/display/drm_hdmi_audio_helper.c
++++ b/drivers/gpu/drm/display/drm_hdmi_audio_helper.c
+@@ -34,6 +34,28 @@ static int drm_connector_hdmi_audio_prepare(struct device *dev, void *data,
+ 	const struct drm_connector_hdmi_audio_funcs *funcs =
+ 		connector->hdmi_audio.funcs;
+ 
++	if (connector->hdmi_audio.prepare_early)
++		return 0;
++
++	return funcs->prepare(connector, fmt, hparms);
++}
++
++/*
++ * Only used by connectors that asked for it; everyone else keeps being
++ * configured from prepare() and this returns without doing anything. See
++ * &drm_bridge.hdmi_audio_prepare_early for why a connector would want it.
++ */
++static int drm_connector_hdmi_audio_hw_params(struct device *dev, void *data,
++					      struct hdmi_codec_daifmt *fmt,
++					      struct hdmi_codec_params *hparms)
++{
++	struct drm_connector *connector = data;
++	const struct drm_connector_hdmi_audio_funcs *funcs =
++		connector->hdmi_audio.funcs;
++
++	if (!connector->hdmi_audio.prepare_early)
++		return 0;
++
+ 	return funcs->prepare(connector, fmt, hparms);
+ }
+ 
+@@ -130,6 +152,7 @@ EXPORT_SYMBOL(drm_connector_hdmi_audio_plugged_notify);
+ 
+ static const struct hdmi_codec_ops drm_connector_hdmi_audio_ops = {
+ 	.audio_startup = drm_connector_hdmi_audio_startup,
++	.hw_params = drm_connector_hdmi_audio_hw_params,
+ 	.prepare = drm_connector_hdmi_audio_prepare,
+ 	.audio_shutdown = drm_connector_hdmi_audio_shutdown,
+ 	.mute_stream = drm_connector_hdmi_audio_mute_stream,
+diff --git a/drivers/gpu/drm/msm/dp/dp_drm.c b/drivers/gpu/drm/msm/dp/dp_drm.c
+index b659d22f5..33bcb8d6c 100644
+--- a/drivers/gpu/drm/msm/dp/dp_drm.c
++++ b/drivers/gpu/drm/msm/dp/dp_drm.c
+@@ -281,6 +281,14 @@ int msm_dp_bridge_init(struct msm_dp *msm_dp_display, struct drm_device *dev,
+ 		bridge->hdmi_audio_dev = &msm_dp_display->pdev->dev;
+ 		bridge->hdmi_audio_max_i2s_playback_channels = 8;
+ 		bridge->hdmi_audio_dai_port = -1;
++		/*
++		 * The LPASS/ADSP side of the DAI link will not start its AFE
++		 * port until this controller's audio clock is running, and
++		 * ASoC prepares CPU DAIs before codec DAIs, so configuring
++		 * from prepare() is too late -- the CPU DAI times out and
++		 * aborts the link before we are called at all.
++		 */
++		bridge->hdmi_audio_prepare_early = 1;
+ 	}
+ 
+ 	rc = devm_drm_bridge_add(dev->dev, bridge);
+diff --git a/include/drm/drm_bridge.h b/include/drm/drm_bridge.h
+index 4ba3a5dee..1538df5db 100644
+--- a/include/drm/drm_bridge.h
++++ b/include/drm/drm_bridge.h
+@@ -1234,6 +1234,23 @@ struct drm_bridge {
+ 	 */
+ 	unsigned int hdmi_audio_spdif_playback : 1;
+ 
++	/**
++	 * @hdmi_audio_prepare_early: configure the sink's audio path from the
++	 * ASoC hw_params callback rather than from prepare.
++	 *
++	 * Both callbacks receive identical parameters, so for most bridges it
++	 * makes no difference and the default (prepare) is right. It matters
++	 * when the CPU side of the DAI link cannot start until the sink's
++	 * audio clock is already running: ASoC walks CPU DAIs before codec
++	 * DAIs and stops at the first error, so a CPU DAI that fails waiting
++	 * for that clock aborts the loop before this bridge's prepare is ever
++	 * reached. Qualcomm's LPASS/ADSP is one such CPU side.
++	 *
++	 * Setting this moves the configuration to hw_params, which runs for
++	 * every DAI in the link before any of them is prepared.
++	 */
++	unsigned int hdmi_audio_prepare_early : 1;
++
+ 	/**
+ 	 * @hdmi_audio_dai_port: sound DAI port for either of
+ 	 * @DRM_BRIDGE_OP_HDMI_AUDIO and @DRM_BRIDGE_OP_DP_AUDIO, -1 if it is
+diff --git a/include/drm/drm_connector.h b/include/drm/drm_connector.h
+index 5f5ca023c..3195d4f8f 100644
+--- a/include/drm/drm_connector.h
++++ b/include/drm/drm_connector.h
+@@ -1920,6 +1920,14 @@ struct drm_connector_hdmi_audio {
+ 	 * The port in DT that is used for the Codec DAI.
+ 	 */
+ 	int dai_port;
++
++	/**
++	 * @prepare_early:
++	 *
++	 * Call @funcs->prepare from the ASoC hw_params callback instead of
++	 * from prepare. See &drm_bridge.hdmi_audio_prepare_early.
++	 */
++	bool prepare_early;
+ };
+ 
+ /*

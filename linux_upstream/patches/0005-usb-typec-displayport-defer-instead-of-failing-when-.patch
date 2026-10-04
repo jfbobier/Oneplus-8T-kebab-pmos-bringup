@@ -1,0 +1,49 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: kebab refactor <kebab@local.invalid>
+Date: Wed, 30 Sep 2026 01:38:59 +0200
+Subject: [PATCH] usb: typec: displayport: defer instead of failing when the
+ port is not DFP
+
+dp_altmode_probe() rejects a port that is not yet TYPEC_HOST with
+-EPROTO. That is a permanent failure: the altmode device stays bound to
+nothing and the driver core never retries it.
+
+The role is not stable at that point. With a dock, the partner's
+alternate modes are registered while the port is still UFP and the
+data-role swap happens afterwards, so whether DisplayPort comes up at
+all depends on the altmode happening to be registered a second time
+after the swap. On the OnePlus 8T this made DP-over-USB-C work on some
+attaches and not others, with "dp_altmode: probe ... failed with error
+-71" as the only clue.
+
+Return -EPROBE_DEFER so the core retries once the role settles.
+---
+ drivers/usb/typec/altmodes/displayport.c | 14 ++++++++++++--
+ 1 file changed, 12 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/usb/typec/altmodes/displayport.c b/drivers/usb/typec/altmodes/displayport.c
+index 263a89c5f..ed60e3bab 100644
+--- a/drivers/usb/typec/altmodes/displayport.c
++++ b/drivers/usb/typec/altmodes/displayport.c
+@@ -765,9 +765,19 @@ int dp_altmode_probe(struct typec_altmode *alt)
+ 	struct fwnode_handle *fwnode;
+ 	struct dp_altmode *dp;
+ 
+-	/* Port can only be DFP_U. */
++	/*
++	 * Port can only be DFP_U.
++	 *
++	 * Defer rather than reject: on a dock the partner registers its
++	 * altmodes while the port is still UFP, so a hard -EPROTO here drops
++	 * the DisplayPort altmode permanently and nothing retries it --
++	 * binding then depends on the altmode happening to be re-registered
++	 * after the data-role swap. -EPROBE_DEFER makes the driver core retry
++	 * once the role settles, which is deterministic and stops logging a
++	 * failure for an ordinary ordering race.
++	 */
+ 	if (typec_altmode_get_data_role(alt) != TYPEC_HOST)
+-		return -EPROTO;
++		return -EPROBE_DEFER;
+ 
+ 	/* Make sure we have compatible pin configurations */
+ 	if (!(DP_CAP_PIN_ASSIGN_DFP_D(port->vdo) &

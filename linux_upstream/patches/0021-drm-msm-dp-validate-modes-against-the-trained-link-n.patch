@@ -1,0 +1,105 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: kebab refactor <kebab@local.invalid>
+Date: Fri, 2 Oct 2026 15:48:57 +0200
+Subject: [PATCH] drm/msm/dp: validate modes against the trained link, not the
+ sink's claim
+
+msm_dp_bridge_mode_valid() sizes every mode against
+panel->link_info, which is what the sink advertises in DPCD. That is not
+necessarily what the link carries. msm_dp_ctrl_on_link() walks the rate
+down HBR3 -> HBR2 -> HBR -> RBR and then reduces the lane count until
+training succeeds, so a cable with two unusable lanes trains at half the
+bandwidth the sink claims.
+
+The validator does not know that, so it keeps advertising modes sized for
+the sink's maximum. Userspace picks one, training "succeeds" at the
+reduced parameters, the mode does not fit in them, and the sink shows a
+black screen -- with nothing in the log to explain it, because from the
+driver's point of view everything worked.
+
+Observed on an sm8250 phone with a 4K monitor whose cable only carries
+two lanes: the connector offers 3840x2160, the link trains at 2 lanes
+HBR2 (8.6 Gbps after 8b/10b against the 12.5 Gbps the mode needs at 24
+bpp, more at 30), and the screen stays black until the user picks
+2560x1440 by hand.
+
+link->link_params holds the trained values and is reset to the sink's
+maximum at the top of every msm_dp_ctrl_on_link(), so taking the lower of
+the two is accurate after a fallback and a no-op before the first
+training. The change can only ever remove modes from the list, never add
+one, so it cannot cause the link to attempt anything it was not already
+attempting.
+
+This does not by itself make userspace re-probe after a fallback -- that
+needs the link-status property, which cannot be set from
+msm_dp_bridge_atomic_enable() because the modeset locks are held, and is
+the deferred work the existing TODO there refers to. What it does ensure
+is that any probe after a fallback offers only modes the link can
+actually drive.
+
+Also log the rejection at debug level; a mode silently disappearing from
+the list is otherwise hard to account for.
+---
+ drivers/gpu/drm/msm/dp/dp_display.c | 38 +++++++++++++++++++++++++++--
+ 1 file changed, 36 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/dp/dp_display.c b/drivers/gpu/drm/msm/dp/dp_display.c
+index 228993fd7..6eef83de4 100644
+--- a/drivers/gpu/drm/msm/dp/dp_display.c
++++ b/drivers/gpu/drm/msm/dp/dp_display.c
+@@ -694,8 +694,10 @@ enum drm_mode_status msm_dp_bridge_mode_valid(struct drm_bridge *bridge,
+ {
+ 	const u32 num_components = 3, default_bpp = 24;
+ 	struct msm_dp_display_private *msm_dp_display;
++	const struct msm_dp_link_info *trained;
+ 	struct msm_dp_link_info *link_info;
+ 	u32 mode_rate_khz = 0, supported_rate_khz = 0, mode_bpp = 0;
++	unsigned int num_lanes, rate;
+ 	struct msm_dp *dp;
+ 	int mode_pclk_khz = mode->clock;
+ 	int link_pclk_khz = mode->clock;
+@@ -736,10 +738,42 @@ enum drm_mode_status msm_dp_bridge_mode_valid(struct drm_bridge *bridge,
+ 			mode_bpp, link_pclk_khz);
+ 
+ 	mode_rate_khz = link_pclk_khz * mode_bpp;
+-	supported_rate_khz = link_info->num_lanes * link_info->rate * 8;
+ 
+-	if (mode_rate_khz > supported_rate_khz)
++	/*
++	 * link_info is what the sink advertises in DPCD, which is not
++	 * necessarily what we managed to train. msm_dp_ctrl_on_link() walks
++	 * the rate down HBR3 -> HBR2 -> HBR -> RBR and then halves the lane
++	 * count until training succeeds, so a cable with two unusable lanes
++	 * ends up carrying half the bandwidth the sink claims.
++	 *
++	 * Sizing modes against the sink's maximum then advertises modes the
++	 * link cannot carry: training "succeeds" at the reduced parameters,
++	 * the mode does not fit in them, and the sink shows a black screen
++	 * with nothing in the log to say why.
++	 *
++	 * link->link_params holds the trained values, and is reset to the
++	 * sink's maximum at the top of every msm_dp_ctrl_on_link(), so taking
++	 * the lower of the two is accurate after a fallback and a no-op
++	 * before the first training.
++	 */
++	num_lanes = link_info->num_lanes;
++	rate = link_info->rate;
++
++	trained = &msm_dp_display->link->link_params;
++	if (trained->num_lanes && trained->num_lanes < num_lanes)
++		num_lanes = trained->num_lanes;
++	if (trained->rate && trained->rate < rate)
++		rate = trained->rate;
++
++	supported_rate_khz = num_lanes * rate * 8;
++
++	if (mode_rate_khz > supported_rate_khz) {
++		drm_dbg_dp(dp->drm_dev,
++			   "mode %s rejected: needs %u kHz, link carries %u kHz (%u lanes @ %u)\n",
++			   mode->name, mode_rate_khz, supported_rate_khz,
++			   num_lanes, rate);
+ 		return MODE_BAD;
++	}
+ 
+ 	return MODE_OK;
+ }
