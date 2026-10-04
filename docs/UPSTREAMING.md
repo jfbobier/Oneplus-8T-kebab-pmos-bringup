@@ -153,8 +153,19 @@ all of that plus charging and the full pinctrl. This is the change that
 actually makes the device work for everyone else, and it is the one to
 get right.
 
-**It should go to mainline too.** `sm8250-oneplus-kebab.dts` exists in
-mainline `linux-arm-msm`; the fork is a staging ground, not the
+**Correction, verified 2026-10-04:** an earlier version of this document
+said `sm8250-oneplus-kebab.dts` already exists in mainline. It does not.
+Linus's tree has **no OnePlus sm8250 device at all** — not the 8, the 8T
+nor the 8 Pro. The sm8250 boards it carries are the Qualcomm HDK and MTP
+reference boards, two Samsungs, two Sonys and three Xiaomis.
+
+That makes the devicetree the single most valuable thing here: adding
+kebab would be genuine *device enablement*, which is what mainline counts
+as a contribution for a board, rather than a fix to something that
+already works. It is also the longest campaign, because it depends on the
+six new drivers landing first.
+
+**It should go to mainline.** The fork is a staging ground, not the
 destination. Splitting the devicetree by subsystem (display, then touch,
 then audio, …) is how it will be reviewable — one 1100-line commit will
 not be.
