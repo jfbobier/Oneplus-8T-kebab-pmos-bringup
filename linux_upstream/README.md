@@ -12,6 +12,33 @@ own rules; these six are bug fixes to code that already exists there.
 
 ---
 
+## Scope: this directory is self-contained
+
+This is a **separate project** from the device bring-up around it, and
+the boundary matters.
+
+* The patches here are **copies**. The originals live in `../kernel/` and
+  are the configuration running on a working phone.
+* **Do not edit anything outside this directory** while upstreaming.
+  Rebasing, rewriting commit messages, splitting series, responding to
+  review — all of it happens here or in a scratch kernel clone, never in
+  `../kernel/`. That tree is a known-good device configuration; changing
+  it to suit a mailing list would break a working phone for no benefit.
+* **Nothing here needs the build host.** No cross-compilation of the
+  kebab kernel, no flashing, no device. Upstreaming needs a mainline (or
+  `msm-next`) checkout, `checkpatch.pl`, `get_maintainer.pl` and
+  `git send-email`. A workstation is enough.
+* Divergence between the two is expected and fine. If a patch is reshaped
+  for review it does **not** need back-porting into `../kernel/` — the
+  device is already running the version that works.
+
+The one thing worth copying *back*, if it ever happens: a note in
+`../docs/REGRESSIONS.md` recording that a patch went upstream, was
+rejected, or was superseded. That is history worth keeping; the code is
+not.
+
+---
+
 ## Before anything else: the sign-off is yours
 
 Every patch here has **no `Signed-off-by:` line**, deliberately.
