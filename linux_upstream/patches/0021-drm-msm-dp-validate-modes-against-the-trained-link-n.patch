@@ -4,7 +4,7 @@ Date: Fri, 2 Oct 2026 15:48:57 +0200
 Subject: [PATCH] drm/msm/dp: validate modes against the trained link, not the
  sink's claim
 
-msm_dp_bridge_mode_valid() sizes every mode against
+msm_dp_display_mode_valid() sizes every mode against
 panel->link_info, which is what the sink advertises in DPCD. That is not
 necessarily what the link carries. msm_dp_ctrl_on_link() walks the rate
 down HBR3 -> HBR2 -> HBR -> RBR and then reduces the lane count until
@@ -40,14 +40,14 @@ actually drive.
 Also log the rejection at debug level; a mode silently disappearing from
 the list is otherwise hard to account for.
 ---
- drivers/gpu/drm/msm/dp/dp_display.c | 38 +++++++++++++++++++++++++++--
+ drivers/gpu/drm/msm/dp/dp_display.c | 38 +++++++++++++++++++++++++++++++++++--
  1 file changed, 36 insertions(+), 2 deletions(-)
 
 diff --git a/drivers/gpu/drm/msm/dp/dp_display.c b/drivers/gpu/drm/msm/dp/dp_display.c
-index 228993fd7..6eef83de4 100644
+index bce641d7d..634d825aa 100644
 --- a/drivers/gpu/drm/msm/dp/dp_display.c
 +++ b/drivers/gpu/drm/msm/dp/dp_display.c
-@@ -694,8 +694,10 @@ enum drm_mode_status msm_dp_bridge_mode_valid(struct drm_bridge *bridge,
+@@ -750,8 +750,10 @@ enum drm_mode_status msm_dp_display_mode_valid(struct msm_dp *dp,
  {
  	const u32 num_components = 3, default_bpp = 24;
  	struct msm_dp_display_private *msm_dp_display;
@@ -55,15 +55,15 @@ index 228993fd7..6eef83de4 100644
  	struct msm_dp_link_info *link_info;
  	u32 mode_rate_khz = 0, supported_rate_khz = 0, mode_bpp = 0;
 +	unsigned int num_lanes, rate;
- 	struct msm_dp *dp;
  	int mode_pclk_khz = mode->clock;
- 	int link_pclk_khz = mode->clock;
-@@ -736,10 +738,42 @@ enum drm_mode_status msm_dp_bridge_mode_valid(struct drm_bridge *bridge,
+ 	int link_pclk_khz;
+ 	bool is_yuv_420;
+@@ -789,10 +791,42 @@ enum drm_mode_status msm_dp_display_mode_valid(struct msm_dp *dp,
  			mode_bpp, link_pclk_khz);
- 
+
  	mode_rate_khz = link_pclk_khz * mode_bpp;
 -	supported_rate_khz = link_info->num_lanes * link_info->rate * 8;
- 
+
 -	if (mode_rate_khz > supported_rate_khz)
 +	/*
 +	 * link_info is what the sink advertises in DPCD, which is not
@@ -100,6 +100,9 @@ index 228993fd7..6eef83de4 100644
 +			   num_lanes, rate);
  		return MODE_BAD;
 +	}
- 
+
  	return MODE_OK;
  }
+--
+2.43.0
+

@@ -39,6 +39,20 @@ fill before the (inert) callback. Both are computed into an on-stack
 hdmi_codec_params that is then discarded, and the one shared value it
 writes, daifmt->bit_fmt, is set by hdmi_codec_prepare() to the same value
 immediately afterwards.
+
+One more side effect worth disclosing: hdmi_codec_fill_codec_params()
+also writes hcp->chmap_idx, which is not on-stack -- it persists on the
+hdmi-codec device and is reused by the next call to
+hdmi_codec_get_ch_alloc_table_idx(). hdmi_codec_prepare() recomputes it
+immediately afterwards from the same channel count, so the value itself
+does not go stale. But hdmi_codec_hw_params() now reaching this code at
+all means that a channel count the sink's ELD does not advertise -- the
+error path in hdmi_codec_get_ch_alloc_table_idx() -- is reported from
+hw_params() instead of prepare(), for every bridge sharing
+drm_connector_hdmi_audio_ops, not only the ones that set
+hdmi_audio_prepare_early. That changes when a bad channel count is
+reported, not whether it is, but it is a change to seven bridges this
+patch has no other reason to touch, and worth a maintainer's opinion.
 ---
  .../gpu/drm/display/drm_bridge_connector.c    |  3 +++
  .../gpu/drm/display/drm_hdmi_audio_helper.c   | 23 +++++++++++++++++++

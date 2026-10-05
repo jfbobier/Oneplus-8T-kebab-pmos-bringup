@@ -22,13 +22,14 @@ Return -EPROBE_DEFER so the core retries once the role settles.
  1 file changed, 12 insertions(+), 2 deletions(-)
 
 diff --git a/drivers/usb/typec/altmodes/displayport.c b/drivers/usb/typec/altmodes/displayport.c
-index 263a89c5f..ed60e3bab 100644
+index 51c92dd88..d84785309 100644
 --- a/drivers/usb/typec/altmodes/displayport.c
 +++ b/drivers/usb/typec/altmodes/displayport.c
-@@ -765,9 +765,19 @@ int dp_altmode_probe(struct typec_altmode *alt)
+@@ -766,10 +766,20 @@ int dp_altmode_probe(struct typec_altmode *alt)
  	struct fwnode_handle *fwnode;
  	struct dp_altmode *dp;
- 
+ 	u32 cap = DP_CAP_CAPABILITY(alt->vdo);
+
 -	/* Port can only be DFP_U. */
 +	/*
 +	 * Port can only be DFP_U.
@@ -44,6 +45,9 @@ index 263a89c5f..ed60e3bab 100644
  	if (typec_altmode_get_data_role(alt) != TYPEC_HOST)
 -		return -EPROTO;
 +		return -EPROBE_DEFER;
- 
+
  	/* Make sure we have compatible pin configurations */
  	if (!(DP_CAP_PIN_ASSIGN_DFP_D(port->vdo) &
+--
+2.43.0
+

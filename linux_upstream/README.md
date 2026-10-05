@@ -1,6 +1,6 @@
 # Upstreaming the DisplayPort work to mainline Linux
 
-Six patches from the OnePlus 8T (kebab) bring-up that are **not
+Five patches from the OnePlus 8T (kebab) bring-up that are **not
 kebab-specific** and fix bugs still present in Linus's tree. Prepared for
 a dedicated session; nothing here has been sent to anyone.
 
@@ -8,7 +8,20 @@ The device bring-up itself — the board devicetree and the six new drivers
 — is deliberately **not** part of this. That belongs to the
 postmarketOS/Nura sm8250 tree, and their AI policy makes it a non-starter
 without redoing the work by hand. Mainline is a separate project with its
-own rules; these six are bug fixes to code that already exists there.
+own rules; these five are bug fixes to code that already exists there.
+
+## Three sets, three send-to threads
+
+* **`drm/msm` — 0014, 0020, 0021.** One driver, one maintainer pair, one
+  objective: make Type-C DP actually train and offer modes it can drive.
+  Send as a single series.
+* **`usb/typec` — 0005.** A race condition in generic Type-C altmode core,
+  not DRM-specific and not phone-specific — any dock could hit it. Its own
+  thread, its own reviewers.
+* **`drm/display` — 0019.** A cleaner architecture for sink audio
+  configuration timing, usable by every bridge on the shared HDMI audio
+  helper, not just this one. Its own thread; expect design negotiation,
+  not just a bug confirmation.
 
 ---
 
@@ -63,13 +76,30 @@ Two practical consequences:
 
 ## The patches
 
-All six verified against `torvalds/linux` on **2026-10-04**. Line numbers
-are from that check.
+All verified against `torvalds/linux` on **2026-10-04**, and re-verified
+on **2026-10-05** by actually applying each one with `git apply --check`
+against both `torvalds/linux` `master` and `drm/msm` `msm-next` (not just
+reading the source) — see "Dropped on purpose" below for what that second
+pass found. Line numbers are from that second check.
+
+**0014 and 0019 apply unmodified to both trees.** 0005, 0020 and 0021 did
+not — not a line-offset problem but real drift between the pmOS fork's DP
+code and current upstream (e.g. `msm_dp_ctrl_link_train_1()` gained a
+`panel` argument, and `msm_dp_bridge_mode_valid()` is still
+`msm_dp_display_mode_valid()` taking a `struct msm_dp *` rather than a
+`drm_bridge_funcs` callback). All three have been rewritten against
+`msm-next` as of its `drm/msm/dp: add stream-aware link register
+accessors` commit and now apply cleanly — individually, and together with
+0014 and 0019 applied in sequence against the same tree, to rule out the
+patches stepping on each other even though they ship on separate threads.
+`checkpatch.pl --strict` is clean on every one (the only reported item
+anywhere is the expected missing `Signed-off-by:`). 0005 was similarly
+re-verified against `torvalds/linux` `master` directly, since `usb/typec`
+isn't part of `msm-next`'s scope.
 
 | # | What | Still broken in mainline? |
 |---|---|---|
 | 0014 | DP link-training fallback is unreachable on Type-C boards | yes — `msm_dp_aux_is_link_connected()` still guards both branches, `dp_ctrl.c:2382` and `:2407` |
-| 0015 | NULL deref reading the DP test debugfs files | yes — `connector->status` dereferenced unchecked at `dp_debug.c:95, 116, 147, 173` |
 | 0021 | Modes sized on the sink's claim, not the trained link | yes — `supported_rate_khz = link_info->num_lanes * link_info->rate * 8` in `msm_dp_display_mode_valid()` |
 | 0020 | A healthy DP attach logged as nine errors | yes — `DRM_ERROR_RATELIMITED` at `dp_ctrl.c:1490`, `DRM_ERROR` at `:1637 :1644 :1701`, and `dp_aux.c:461` |
 | 0019 | DP/HDMI sink audio configured too late for a stateful CPU DAI | yes — `drm_connector_hdmi_audio_ops` still has `.prepare` and no `.hw_params` |
@@ -77,7 +107,7 @@ are from that check.
 
 ### Lead with 0014
 
-It is the strongest of the six. DP link-training fallback — the rate and
+It is the strongest of the five. DP link-training fallback — the rate and
 lane-count step-down — is **dead code on every Type-C DP board using this
 driver**, because the retry loop gates itself on the DP controller's own
 HPD register, which reads DISCONNECTED when HPD arrives out of band
@@ -89,14 +119,6 @@ found with a cable whose lanes 2 and 3 never achieve clock recovery.
 
 This is not phone-only. The same driver serves the Snapdragon X Elite
 (`x1e80100`) laptops, which are all Type-C DP.
-
-### 0015 is a crash and can go on its own
-
-Anything that reads `dp_test_active`, `dp_test_data` or `dp_test_type`
-under `/sys/kernel/debug/dri/*/DP-*/` oopses the kernel on external DP.
-`msm_dp_debug_init()` stores a connector pointer that is NULL at that
-point and nothing checks it. Trivially triggered — a shell glob did it
-here three times. Likely wants `Fixes:` and `Cc: stable`.
 
 ### 0021 is deliberately half a fix
 
@@ -135,6 +157,18 @@ the (inert) callback. Both compute into an on-stack struct that is
 discarded, and the one shared value written, `daifmt->bit_fmt`, is set by
 `hdmi_codec_prepare()` to the identical value immediately after.
 
+A second side effect, added to the commit message on 2026-10-05 after
+reading `hdmi-codec.c` directly rather than trusting the first draft's
+summary: `hdmi_codec_fill_codec_params()` also writes `hcp->chmap_idx`,
+which is **not** on-stack — it persists on the device and is read back by
+the next `hdmi_codec_get_ch_alloc_table_idx()` call. The value itself
+doesn't go stale, since `prepare()` recomputes it identically right
+after. But a channel count the sink's ELD doesn't advertise now fails
+from `hw_params()` instead of `prepare()`, for all seven *other* bridges
+sharing `drm_connector_hdmi_audio_ops` — not just this one. Same failure,
+earlier point in the sequence, but it touches bridges this patch has no
+other reason to change. Worth a maintainer's opinion, not just a mention.
+
 ---
 
 ## Dropped on purpose
@@ -153,6 +187,41 @@ mode_rate_khz = link_pclk_khz * mode_bpp;
 
 Sending it would have been a duplicate.
 
+**`0015` (the DP test-debugfs NULL deref) was dropped on 2026-10-05**,
+after it was already written, verified against `msm-next`, and
+checkpatch-clean. While re-checking `msm-next`'s commit log for anything
+that might collide with this series — not just whether the patches
+apply, but whether someone had already fixed the same bugs — two commits
+turned up from **2026-09-30**, both from Xilin Wu (Radxa), reviewed and
+merged by Dmitry Baryshkov:
+
+* `c2f772ec5` **"drm/msm/dp: Initialize the debugfs connector pointer"**
+  — fixes `debug->connector` being NULL in the same four handlers 0015
+  touched. Its own diagnosis differs from ours: it blames a refactor
+  regression (`Fixes: ab8420418c2e "drm/msm/dp: cleanup debugfs
+  handling"`) that stopped storing a connector pointer that was already
+  being passed in, rather than "the connector doesn't exist yet" — which
+  is what the kebab reproduction pointed to. Tracing
+  `msm_dp_modeset_init()` → `msm_dp_drm_connector_init()` against current
+  `msm-next` shows `dp->connector` is set before the bridge's
+  `debugfs_init` callback can fire during probe, and nothing nulls it on
+  `unbind` either — the DRM core tears down the whole `drm_device`
+  debugfs tree atomically. No window was found where the handlers 0015
+  guarded can still see a NULL connector post-fix.
+* `62c6146e5` "drm/msm/dp: Serialize HPD state updates" — same series,
+  unrelated code, no overlap with any of the other four patches.
+
+Searching `msm-next`'s full history for link-training, HPD-gating or
+mode-validation work turned up nothing else — 0014, 0020 and 0021 remain
+unaddressed as of this check. Both Radxa commits carry `Assisted-by: LLM`
+and were merged by Baryshkov days before this session, which is also
+concrete evidence (not a policy guess) that disclosed AI-assisted patches
+are presently landing in `msm` under his review.
+
+Sending a fix for a bug that's already fixed costs a maintainer's time to
+notice and reply "see c2f772ec5" — exactly the kind of thing worth
+catching before sending, not after.
+
 ---
 
 ## Rebasing: these do not apply to mainline as-is
@@ -162,8 +231,10 @@ The patches are against postmarketOS's `linux-postmarketos-qcom-sm8250`
 Linus's tree. The clearest symptom: our tree has
 `msm_dp_bridge_mode_valid()` as a `drm_bridge_funcs` callback, while
 mainline still has `msm_dp_display_mode_valid()` taking a `struct msm_dp
-*`. 0021 in particular has to be re-written against whichever base you
-target, not just rebased.
+*`. 0021 needed a full rewrite against that difference; 0020 needed one
+hunk adjusted for an added `panel` argument; 0005 needed only a context
+line. All three have already been done — see "The patches" above — this
+section is for if you re-verify later and need to do it again.
 
 Target the msm tree rather than Linus directly:
 
@@ -180,7 +251,17 @@ there.
 
 ## Where to send what
 
-**drm/msm — 0014, 0015, 0020, 0021**
+This already splits DP video from DP audio, which is the grouping that
+matters most here: 0014/0020/0021 are the `drm/msm` video-path fixes
+(link training, mode validation, log level), 0019 is the one audio patch
+and belongs to a different subsystem (`drm/display`'s shared HDMI audio
+helper) with its own reviewers, and 0005 is Type-C altmode probe timing,
+unrelated to DRM entirely. Sending 0019 inside a `drm/msm` series would
+put it in front of the wrong reviewers and tie its fate to three unrelated
+video fixes; keep it, and 0005, on their own threads as the table below
+already has it.
+
+**drm/msm — 0014, 0020, 0021**
 
 ```
 M: Rob Clark <robin.clark@oss.qualcomm.com>
@@ -201,10 +282,11 @@ than assuming the msm reviewers.
 **usb/typec — 0005.** Different subsystem entirely: `linux-usb@vger.kernel.org`,
 Greg Kroah-Hartman and Heikki Krogerus. Do not fold it into a DRM series.
 
-Suggested order: **0015** alone first (self-contained crash fix, good way
-to learn the process), then **0014**, then **0021** once you have decided
-about its second half, then **0020**, then **0019** and **0005** on their
-own timelines.
+Suggested order: **0014** first within the `drm/msm` series — strongest
+evidence, four lines, affects every Type-C DP board on this driver — then
+**0021** once you have decided about its second half, then **0020**.
+**0019** and **0005** go out on their own timelines, independent of the
+`drm/msm` series and of each other.
 
 ## Mechanics
 
@@ -215,9 +297,8 @@ git send-email --to=... --cc=... <patch>
 ```
 
 One logical change per patch — these already are. Add `Fixes:` where you
-can identify the introducing commit, and `Cc: stable@vger.kernel.org` for
-0015. Expect v2, v3; version the series and include a changelog under the
-`---` line.
+can identify the introducing commit. Expect v2, v3; version the series
+and include a changelog under the `---` line.
 
 ---
 
@@ -229,7 +310,6 @@ parent repository's `docs/REGRESSIONS.md`:
 | patch | journal entry | what the evidence is |
 |---|---|---|
 | 0014, 0021 | `DP-1 / DP-2` | DPCD 0x202/0x203 read at each voltage-swing step, showing lanes 2 and 3 never achieve CR at any rate; the full fallback sequence; 4K@60 working once the link trained at full width |
-| 0015 | `DP-1 / DP-2` | three reproduced oopses, and why `timeout 3 cat` does not help when the fault is inside the read |
 | 0019 | `AUDIO-DP` | ftrace showing `msm_dp_audio_prepare()` is never called, only `msm_dp_audio_shutdown()` from teardown; the ADSP answering `-110` then `ADSP_EALREADY` |
 | 0020 | `NOISE-2` | 11 error lines → 0 on a successful attach, measured across two kernels with a monitor attached |
 | 0005 | `USB-1`, `DP-3` | Type-C role and altmode state at the point of failure |
